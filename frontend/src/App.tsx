@@ -47,8 +47,8 @@ function MouseArt({interactive = false, selected, onSelect, visibleMarkers=[0,1,
 }
 
 function MouseSideArt({interactive=false,selected,onSelect}: {interactive?:boolean;selected?:number;onSelect?:(index:number)=>void}) {
-  const marker=(index:number,x:number)=><g onClick={()=>onSelect?.(index)} className={`side-marker ${selected===index?'selected':''}`}><circle cx={x} cy="150" r="17"/><text x={x} y="151">{index+1}</text></g>
-  return <><img className="mouse-side-art" src={productSideImage} alt="PRO X2 Superstrike side view" draggable="false"/>{interactive&&<svg className="side-hitareas" viewBox="0 0 974 311" aria-hidden="true">{marker(3,380)}{marker(4,522)}</svg>}</>
+  const marker=(index:number,x:number,y=150)=><g onClick={()=>onSelect?.(index)} className={`side-marker ${selected===index?'selected':''}`}><circle cx={x} cy={y} r="17"/><text x={x} y={y+1}>{index+1}</text></g>
+  return <><img className="mouse-side-art" src={productSideImage} alt="PRO X2 Superstrike side view" draggable="false"/>{interactive&&<svg className="side-hitareas" viewBox="0 0 974 311" aria-hidden="true">{marker(4,380)}{marker(3,522,138)}</svg>}</>
 }
 
 function EmptyState({state}: {state: DeviceState}) {
