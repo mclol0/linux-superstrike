@@ -26,3 +26,11 @@ func TestResolveActiveProfileSectorFallsBackToFirstEnabled(t *testing.T) {
 		t.Fatalf("got sector %d, want first enabled sector 2", got)
 	}
 }
+
+func TestNormalizeDeviceNameFixesFirmwareTypo(t *testing.T) {
+	for _, name := range []string{"PRO X2 SUPERSTRIIKE", "Logitech X2 SUPERSTRIKE"} {
+		if got := normalizeDeviceName(name); got != "PRO X2 Superstrike" {
+			t.Fatalf("normalizeDeviceName(%q) = %q", name, got)
+		}
+	}
+}

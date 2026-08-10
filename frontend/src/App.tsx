@@ -16,7 +16,7 @@ function friendlyName(value: string | undefined, fallback: string) {
 }
 
 function friendlyDeviceName(value: string) {
-  if (/superstrike/i.test(value)) return 'PRO X2 Superstrike'
+  if (/superstri+ke/i.test(value)) return 'PRO X2 Superstrike'
   return friendlyName(value, 'Superstrike')
 }
 

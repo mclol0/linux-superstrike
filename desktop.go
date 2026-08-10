@@ -135,6 +135,7 @@ func runDesktop() {
 		Height:                   860,
 		MinWidth:                 1000,
 		MinHeight:                700,
+		MaxWidth:                 8192,
 		BackgroundColour:         &options.RGBA{R: 7, G: 9, B: 13, A: 1},
 		AssetServer:              &assetserver.Options{Assets: desktopAssets},
 		OnStartup:                c.startup,
@@ -206,10 +207,18 @@ func (c *DesktopController) connectLocked() {
 		c.activeProfileSector = sector
 	}
 	if n, err := pick.DeviceName(); err == nil && n != "" {
-		c.name = n
+		c.name = normalizeDeviceName(n)
 	} else {
-		c.name = pick.Name
+		c.name = normalizeDeviceName(pick.Name)
 	}
+}
+
+func normalizeDeviceName(name string) string {
+	upper := strings.ToUpper(name)
+	if strings.Contains(upper, "SUPERSTRIKE") || strings.Contains(upper, "SUPERSTRIIKE") {
+		return "PRO X2 Superstrike"
+	}
+	return name
 }
 
 func (c *DesktopController) ensureDeviceLocked() error {
