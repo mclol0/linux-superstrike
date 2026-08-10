@@ -1,0 +1,242 @@
+import { type ReactElement, useCallback, useEffect, useMemo, useState } from 'react'
+import { api, ButtonPayload, Choices, DeviceState, Haptics, onDeviceUpdate, Profile } from './backend'
+import productImage from './productImage'
+import productSideImage from './productSideImage'
+
+type Page = 'dashboard' | 'dpi' | 'profiles' | 'buttons' | 'haptics'
+type Toast = { id: number; text: string; error?: boolean }
+type QuickDPI = { id:string; name:string; x:number; y:number; linked:boolean; color:string }
+const rates = [8000, 4000, 2000, 1000, 500, 250, 125]
+const dpiPresetKey = 'superstrike.quick-dpi.v1'
+
+function friendlyName(value: string | undefined, fallback: string) {
+  if (!value) return fallback
+  const factory = value.match(/^PROFILE_NAME_(.+)$/i)
+  const clean = (factory?.[1] || value).replaceAll('_', ' ').trim()
+  return clean.toLowerCase().replace(/\b\w/g, letter => letter.toUpperCase())
+}
+
+function friendlyDeviceName(value: string) {
+  if (/superstrike/i.test(value)) return 'PRO X2 Superstrike'
+  return friendlyName(value, 'Superstrike')
+}
+
+function Icon({name}: {name: Page | 'refresh' | 'check' | 'edit' | 'battery' | 'signal'}) {
+  const paths: Record<string, ReactElement> = {
+    dashboard: <><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></>,
+    profiles: <><path d="M5 5h14v4H5zM5 11h14v4H5zM5 17h14v2H5z"/></>,
+    buttons: <><path d="M12 3c-4.2 0-7 3.2-7 8.4V16c0 3.1 2.4 5 7 5s7-1.9 7-5v-4.6C19 6.2 16.2 3 12 3Z"/><path d="M12 3v7M9 7h6" className="cut"/></>,
+    haptics: <><path d="M8 8a5.7 5.7 0 0 0 0 8M5 5a9.9 9.9 0 0 0 0 14M16 8a5.7 5.7 0 0 1 0 8M19 5a9.9 9.9 0 0 1 0 14"/><circle cx="12" cy="12" r="2"/></>,
+    refresh: <path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.7-2.6L20 11M4 13l2.2 4.5A7 7 0 0 0 18 15"/>,
+    check: <path d="m5 12 4 4L19 6"/>, edit: <path d="m14 5 5 5M4 20l3.6-.7L19 8a2.1 2.1 0 0 0-3-3L4.7 16.3 4 20Z"/>,
+    battery: <><rect x="3" y="7" width="17" height="10" rx="2"/><path d="M22 10v4"/></>,
+    signal: <><path d="M5 19v-3M10 19v-7M15 19V8M20 19V4"/></>,
+  }
+  return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>
+}
+
+function MouseArt({interactive = false, selected, onSelect, visibleMarkers=[0,1,2]}: {interactive?: boolean; selected?: number; onSelect?: (i: number) => void; visibleMarkers?:number[]}) {
+  const marker = (index: number, x: number, y: number) => <g onClick={() => onSelect?.(index)} className={`mouse-marker ${selected === index ? 'selected' : ''}`}><circle cx={x} cy={y} r="30"/><text x={x} y={y + 2}>{index + 1}</text></g>
+  return <div className={`mouse-art ${interactive ? 'interactive' : ''}`} role="img" aria-label="PRO X2 Superstrike mouse">
+    <img src={productImage} alt="" draggable="false"/>
+    {interactive && <svg className="mouse-hitareas" viewBox="0 0 806 1601" aria-hidden="true">
+      {visibleMarkers.includes(0)&&marker(0, 285, 300)}
+      {visibleMarkers.includes(1)&&marker(1, 520, 300)}
+      {visibleMarkers.includes(2)&&marker(2, 403, 335)}
+    </svg>}
+  </div>
+}
+
+function MouseSideArt({interactive=false,selected,onSelect}: {interactive?:boolean;selected?:number;onSelect?:(index:number)=>void}) {
+  const marker=(index:number,x:number)=><g onClick={()=>onSelect?.(index)} className={`side-marker ${selected===index?'selected':''}`}><circle cx={x} cy="150" r="17"/><text x={x} y="151">{index+1}</text></g>
+  return <><img className="mouse-side-art" src={productSideImage} alt="PRO X2 Superstrike side view" draggable="false"/>{interactive&&<svg className="side-hitareas" viewBox="0 0 974 311" aria-hidden="true">{marker(3,380)}{marker(4,522)}</svg>}</>
+}
+
+function EmptyState({state}: {state: DeviceState}) {
+  return <div className="empty-state glass"><div className="empty-orbit"><span /></div><h2>{state.permissionDenied ? 'Permission required' : 'Waiting for your Superstrike'}</h2><p>{state.permissionDenied ? 'The mouse is connected, but Linux has not granted access. Install the included udev rule, then reconnect the mouse.' : 'Power on or reconnect your mouse. This screen will update automatically when it becomes available.'}</p><div className="pulse-label"><i /> Scanning for device</div></div>
+}
+
+function Metric({label, value, suffix, detail, icon}: {label: string; value: string | number; suffix?: string; detail: string; icon: 'profiles'|'signal'|'battery'}) {
+  return <article className="metric glass"><div className="metric-top"><span>{label}</span><Icon name={icon}/></div><div className="metric-value">{value}<small>{suffix}</small></div><p>{detail}</p></article>
+}
+
+function Dashboard({state, notify}: {state: DeviceState; notify: (s: string, e?: boolean) => void}) {
+  const [selectedRate, setSelectedRate] = useState(0)
+  const [savingRate, setSavingRate] = useState(false)
+  useEffect(() => {
+    if (!state.connected) return
+    api.profiles().then(profiles => {
+      const active = profiles.find(profile => profile.active)
+      if (active) setSelectedRate(active.pollingRate)
+    }).catch(() => {})
+  }, [state.connected, state.profile])
+  const chooseRate = async (rate: number) => {
+    if (savingRate || rate === selectedRate) return
+    const previous = selectedRate
+    setSelectedRate(rate); setSavingRate(true)
+    try {
+      const profiles = await api.profiles()
+      const active = profiles.find(profile => profile.active)
+      if (!active) throw new Error('No active onboard profile was found')
+      await api.updateRate(active.sector, rate)
+      const updated = await api.profiles()
+      setSelectedRate(updated.find(profile => profile.active)?.pollingRate || rate)
+      notify(`Polling rate set to ${rate} Hz`)
+    } catch (error) {
+      setSelectedRate(previous); notify(String(error), true)
+    } finally { setSavingRate(false) }
+  }
+  if (!state.connected) return <EmptyState state={state}/>
+  return <div className="hub-dashboard page-enter">
+    <section className="hub-panel product-view"><MouseArt/></section>
+    <section className="hub-panel side-view"><MouseSideArt/></section>
+    <section className="hub-panel rate-overview"><div><h2>Polling Rate</h2><p>Select the USB report frequency</p></div><div className={`rate-track ${savingRate ? 'saving' : ''}`}>{rates.slice().reverse().map(rate=><button key={rate} className={selectedRate===rate?'active':''} onClick={()=>chooseRate(rate)} disabled={savingRate}>{rate >= 1000 ? `${rate/1000}K` : rate}<small>Hz</small></button>)}</div></section>
+  </div>
+}
+
+function DPIPage({notify}: {notify: (s: string, e?: boolean) => void}) {
+  const [activeProfile,setActiveProfile] = useState<Profile>()
+  const [presets,setPresets] = useState<QuickDPI[]>([]), [selectedId,setSelectedId] = useState('')
+  const [busy,setBusy] = useState(true), [hydrated,setHydrated] = useState(false), [applying,setApplying] = useState(false)
+  const load = useCallback(async()=>{setBusy(true);try{const list=await api.profiles();const active=list.find(profile=>profile.active)||list[0];setActiveProfile(active);if(!hydrated&&active){let stored:QuickDPI[]=[];try{const parsed=JSON.parse(localStorage.getItem(dpiPresetKey)||'[]');if(Array.isArray(parsed))stored=parsed.filter(item=>item&&typeof item.id==='string'&&typeof item.x==='number'&&typeof item.y==='number')}catch{}if(!stored.length){const color='#'+[active.red,active.green,active.blue].map(value=>value.toString(16).padStart(2,'0')).join('');stored=[{id:'preset-'+Date.now(),name:'Current DPI',x:active.dpiX,y:active.dpiY,linked:active.dpiX===active.dpiY,color}]}setPresets(stored);setSelectedId(stored[0].id);setHydrated(true)}}catch(error){notify(String(error),true)}finally{setBusy(false)}},[notify,hydrated])
+  useEffect(()=>{load()},[load])
+  useEffect(()=>{if(hydrated)localStorage.setItem(dpiPresetKey,JSON.stringify(presets))},[presets,hydrated])
+  const updatePreset=(id:string,change:Partial<QuickDPI>)=>setPresets(current=>current.map(preset=>{if(preset.id!==id)return preset;const next={...preset,...change};if(next.linked&&change.x!==undefined)next.y=change.x;return next}))
+  const selectedPreset=presets.find(preset=>preset.id===selectedId)||presets[0]
+  const appliedId=presets.find(preset=>activeProfile&&preset.x===activeProfile.dpiX&&(preset.linked?preset.x:preset.y)===activeProfile.dpiY)?.id
+  const applyPreset=async(preset:QuickDPI)=>{if(!activeProfile||applying)return;setApplying(true);const x=Math.max(100,Math.min(44000,preset.x));const y=Math.max(100,Math.min(44000,preset.linked?x:preset.y));try{await api.updateDPI(activeProfile.sector,x,y);setActiveProfile({...activeProfile,dpiX:x,dpiY:y});notify((preset.name||'DPI preset')+' applied')}catch(error){notify(String(error),true)}finally{setApplying(false)}}
+  const addPreset=()=>{const source=selectedPreset||{x:activeProfile?.dpiX||800,y:activeProfile?.dpiY||800,linked:true,color:'#108cff'};const preset:QuickDPI={id:'preset-'+Date.now()+'-'+Math.random().toString(16).slice(2),name:'Preset '+(presets.length+1),x:source.x,y:source.y,linked:source.linked,color:source.color};setPresets(current=>[...current,preset]);setSelectedId(preset.id)}
+  if(busy&&!activeProfile)return <Loader text="Reading active profile"/>
+  if(!activeProfile)return <EmptyState state={{connected:false,permissionDenied:false} as DeviceState}/>
+  return <div className="dpi-hub-page page-enter">
+    <main className="dpi-work-panel">
+      <header className="dpi-title"><div><h1>DPI</h1><p>Quick-swap presets stored locally on this PC.</p></div><div className="dpi-title-actions"><span>{presets.length} presets</span><button onClick={addPreset}>＋ Add preset</button></div></header>
+      <div className="dpi-stage-list">{presets.map((preset,index)=><div key={preset.id} className={`dpi-stage-row local ${selectedPreset?.id===preset.id?'selected':''}`} onClick={()=>setSelectedId(preset.id)}>
+        <button className={`dpi-active-radio ${appliedId===preset.id?'active':''}`} title="Apply this preset" disabled={applying} onClick={event=>{event.stopPropagation();applyPreset(preset)}} />
+        <span className="dpi-drag-mark">⠿</span>
+        <input className="dpi-color-input" type="color" value={preset.color} title="Preset color" onClick={event=>event.stopPropagation()} onChange={event=>updatePreset(preset.id,{color:event.target.value})}/>
+        <div className="dpi-stage-name"><input value={preset.name} maxLength={24} onClick={event=>event.stopPropagation()} onChange={event=>updatePreset(preset.id,{name:event.target.value})}/><small>LOCAL PRESET {String(index+1).padStart(2,'0')}</small></div>
+        <label className="dpi-axis-label">X</label><input className="dpi-stage-range" type="range" min="100" max="44000" step="100" value={preset.x} onChange={event=>updatePreset(preset.id,{x:+event.target.value})}/><input className="dpi-stage-number" type="number" min="100" max="44000" step="100" value={preset.x} onChange={event=>updatePreset(preset.id,{x:+event.target.value})}/>
+        <button className={`dpi-link-toggle ${preset.linked?'linked':''}`} title="Link X and Y" onClick={event=>{event.stopPropagation();updatePreset(preset.id,{linked:!preset.linked,y:preset.x})}}>{preset.linked?'Linked':'Split'}</button>
+        <label className="dpi-axis-label y">Y</label><input className="dpi-stage-range y" type="range" min="100" max="44000" step="100" disabled={preset.linked} value={preset.linked?preset.x:preset.y} onChange={event=>updatePreset(preset.id,{y:+event.target.value})}/><input className="dpi-stage-number y" type="number" min="100" max="44000" step="100" disabled={preset.linked} value={preset.linked?preset.x:preset.y} onChange={event=>updatePreset(preset.id,{y:+event.target.value})}/>
+        <button className="dpi-delete-preset" title="Delete preset" disabled={presets.length===1} onClick={event=>{event.stopPropagation();setPresets(current=>current.filter(item=>item.id!==preset.id));if(selectedId===preset.id)setSelectedId(presets.find(item=>item.id!==preset.id)?.id||'')}}>×</button>
+      </div>)}</div>
+      <p className="dpi-save-note">Preset edits save automatically on this computer. Click the circle beside a preset to apply it to the active profile.</p>
+    </main>
+    <aside className="dpi-product-panel"><MouseArt/><div><strong>{selectedPreset?.name||'Quick DPI'}</strong><span>{selectedPreset?(selectedPreset.linked||selectedPreset.x===selectedPreset.y?selectedPreset.x:`${selectedPreset.x} × ${selectedPreset.y}`):'—'} DPI</span></div><section className="dpi-local-status"><span>ACTIVE ONBOARD PROFILE</span><strong>{friendlyName(activeProfile.name,`Profile ${activeProfile.index}`)}</strong><small>{activeProfile.dpiX===activeProfile.dpiY?activeProfile.dpiX:`${activeProfile.dpiX} × ${activeProfile.dpiY}`} DPI</small></section></aside>
+  </div>
+}
+
+function ProfilesPage({notify}: {notify: (s: string, e?: boolean) => void}) {
+  const [profiles,setProfiles] = useState<Profile[]>([]), [busy,setBusy] = useState(true), [selected,setSelected] = useState(0), [name,setName] = useState('')
+  const load = useCallback(async()=>{setBusy(true);try{const list=await api.profiles();setProfiles(list);setSelected(current=>list[current]?current:Math.max(0,list.findIndex(profile=>profile.active)))}catch(error){notify(String(error),true)}finally{setBusy(false)}},[notify])
+  useEffect(()=>{load()},[load])
+  const profile=profiles[selected]
+  useEffect(()=>{setName(profile?.name||'')},[profile?.sector,profile?.name])
+  const action = async(label:string,fn:()=>Promise<unknown>)=>{try{await fn();notify(label);await load()}catch(error){notify(String(error),true)}}
+  if(busy&&!profiles.length)return <Loader text="Reading onboard profiles"/>
+  if(!profile)return <EmptyState state={{connected:false,permissionDenied:false} as DeviceState}/>
+  return <div className="profiles-manager page-enter">
+    <aside className="profile-browser">
+      <header><div><span>ONBOARD MEMORY</span><h1>Profiles</h1></div><button className="icon-button" onClick={load} title="Refresh"><Icon name="refresh"/></button></header>
+      <div className="profile-browser-list">{profiles.map((item,index)=><button key={item.sector} className={`${selected===index?'selected':''} ${item.active?'active':''} ${!item.enabled?'disabled':''}`} onClick={()=>setSelected(index)}><span className="browser-index">{String(index+1).padStart(2,'0')}</span><span><strong>{friendlyName(item.name,`Profile ${item.index}`)}</strong><small>{item.dpiX===item.dpiY?item.dpiX:`${item.dpiX}/${item.dpiY}`} DPI · {item.pollingRate} Hz</small></span><i/></button>)}</div>
+      <footer>{profiles.length} onboard profiles</footer>
+    </aside>
+    <main className="profile-preview-panel">
+      <header><span>PROFILE {String(profile.index).padStart(2,'0')}</span><h1>{friendlyName(profile.name,`Profile ${profile.index}`)}</h1><p>{profile.active?'Currently active on the mouse':'Stored in onboard memory'}</p></header>
+      <div className="profile-mouse-preview"><MouseArt/></div>
+      <div className="profile-stat-row"><div><span>DPI</span><strong>{profile.dpiX===profile.dpiY?profile.dpiX:`${profile.dpiX} × ${profile.dpiY}`}</strong></div><div><span>Polling rate</span><strong>{profile.pollingRate} Hz</strong></div><div><span>Status</span><strong>{profile.enabled?'Enabled':'Disabled'}</strong></div></div>
+    </main>
+    <aside className="profile-settings-panel">
+      <section><span className="settings-kicker">PROFILE SETTINGS</span><h2>Name</h2><label>Profile name</label><input value={name} maxLength={32} onChange={event=>setName(event.target.value)}/><button className="button subtle full" disabled={!name.trim()||name===profile.name} onClick={()=>action('Profile renamed',()=>api.rename(profile.sector,name.trim()))}>Save name</button></section>
+      <section><h2>Onboard state</h2><div className="profile-setting-line"><div><strong>Enabled</strong><small>Available on the mouse</small></div><button className={`switch ${profile.enabled?'on':''}`} onClick={()=>action(profile.enabled?'Profile disabled':'Profile enabled',()=>api.enable(profile.index,!profile.enabled))}><i/></button></div><div className="profile-setting-line"><div><strong>Active profile</strong><small>{profile.active?'In use now':'Not currently active'}</small></div><span className={`profile-state-dot ${profile.active?'on':''}`}/></div>{!profile.active&&<button className="button primary full" disabled={!profile.enabled} onClick={()=>action('Profile activated',()=>api.activate(profile.sector))}>Make active</button>}</section>
+      <section className="profile-color-section"><h2>Profile color</h2><div><i style={{background:`rgb(${profile.red},${profile.green},${profile.blue})`}}/><span>Stored indicator color</span></div></section>
+    </aside>
+  </div>
+}
+
+function Buttons({notify}: {notify: (s: string, e?: boolean) => void}) {
+  const [data, setData] = useState<ButtonPayload>(), [choices, setChoices] = useState<Choices>(), [selected, setSelected] = useState(0)
+  const [kind,setKind] = useState(0), [code,setCode] = useState(0), [mods,setMods] = useState(0), [saving,setSaving] = useState(false)
+  const load = useCallback(async () => { try { const [b,c] = await Promise.all([api.buttons(), api.choices()]); setData(b); setChoices(c) } catch(e) { notify(String(e), true) } }, [notify])
+  useEffect(() => { load() }, [load]); const item = data?.buttons[selected]
+  useEffect(()=>{if(item){setKind(Math.min(item.action.Kind,4));setCode(item.action.Code||1);setMods(item.action.Mods||0)}},[item?.index,item?.action.Kind,item?.action.Code,item?.action.Mods])
+  if(!data||!choices||!item)return <Loader text="Reading button assignments"/>
+  const categories=[{name:'Mouse',kind:1},{name:'Keyboard',kind:2},{name:'Media',kind:3},{name:'Functions',kind:4},{name:'Disabled',kind:0}]
+  const options=kind===1?choices.mouse:kind===2?choices.keys:kind===3?choices.media:kind===4?choices.functions:[]
+  const save=async()=>{setSaving(true);try{await api.setButton(data.sector,item.index,kind,code,mods);notify(`${item.name} remapped`);await load()}catch(error){notify(String(error),true)}finally{setSaving(false)}}
+  return <div className="button-mapper page-enter">
+    <section className="button-visual-panel">
+      <div className="button-top-view"><MouseArt interactive selected={selected} onSelect={index=>{if(data.buttons[index])setSelected(index)}}/></div>
+      <div className="button-side-view"><MouseSideArt interactive selected={selected} onSelect={index=>setSelected(index)}/><div className="side-selection"><span>{selected+1}</span><strong>{item.name}</strong></div></div>
+      <nav className="physical-button-list">{data.buttons.map((button,index)=><button key={button.index} className={selected===index?'selected':''} title={button.name} onClick={()=>setSelected(index)}><i>{index+1}</i><span>{button.name}</span></button>)}</nav>
+    </section>
+    <aside className="mapping-editor-panel">
+      <header><div><span>SELECTED CONTROL</span><h1>{item.name}</h1><p>{item.description}</p></div><i className="mapping-index">{selected+1}</i></header>
+      <div className="mapping-category-tabs">{categories.map(category=><button key={category.kind} className={kind===category.kind?'selected':''} onClick={()=>{setKind(category.kind);const list=category.kind===1?choices.mouse:category.kind===2?choices.keys:category.kind===3?choices.media:category.kind===4?choices.functions:[];setCode(list[0]?.code||0)}}>{category.name}</button>)}</div>
+      <section className="mapping-options"><span>{kind===0?'BUTTON STATE':`${categories.find(category=>category.kind===kind)?.name.toUpperCase()} ASSIGNMENTS`}</span>{kind===0?<button className="mapping-option selected"><strong>Disabled</strong><small>The selected control will do nothing</small></button>:options.map(option=><button key={option.code} className={`mapping-option ${code===option.code?'selected':''}`} onClick={()=>setCode(option.code)}><strong>{option.name}</strong>{code===option.code&&<Icon name="check"/>}</button>)}</section>
+      <section className={`mapping-modifiers ${kind===2?'visible':''}`}><span>MODIFIERS</span><div>{[['Ctrl',1],['Shift',2],['Alt',4],['Super',8]].map(([name,bit])=><button key={String(name)} className={(mods&Number(bit))?'selected':''} disabled={kind!==2} onClick={()=>setMods(mods^Number(bit))}>{name}</button>)}</div></section>
+      <footer><div><span>New assignment</span><strong>{kind===0?'Disabled':options.find(option=>option.code===code)?.name||'Select an assignment'}</strong></div><button className="button primary" disabled={saving||(kind!==0&&!options.some(option=>option.code===code))} onClick={save}>{saving?'Saving…':'Apply assignment'}</button></footer>
+    </aside>
+  </div>
+}
+
+function AssignmentModal({item,choices,onClose,onSave}: {item: ButtonPayload['buttons'][number]; choices: Choices; onClose:()=>void; onSave:(kind:number,code:number,mods:number)=>void}) {
+  const initial = Math.min(item.action.Kind,4), [kind,setKind] = useState(initial), [code,setCode] = useState(item.action.Code || 1), [mods,setMods] = useState(item.action.Mods || 0)
+  const categories = [{n:'Disabled',k:0},{n:'Mouse button',k:1},{n:'Keyboard key',k:2},{n:'Media key',k:3},{n:'Mouse function',k:4}]
+  const list = kind === 1 ? choices.mouse : kind === 2 ? choices.keys : kind === 3 ? choices.media : kind === 4 ? choices.functions : []
+  useEffect(() => { if (list.length && !list.some(v => v.code === code)) setCode(list[0].code) }, [kind])
+  return <div className="modal-backdrop" onMouseDown={e => e.currentTarget === e.target && onClose()}><div className="modal"><div className="modal-head"><div><span>REASSIGN CONTROL</span><h2>{item.name}</h2></div><button onClick={onClose}>×</button></div><label>Action type</label><div className="category-grid">{categories.map(c => <button className={kind === c.k ? 'selected' : ''} onClick={() => setKind(c.k)} key={c.k}>{c.n}</button>)}</div>{kind !== 0 && <><label>Assignment</label><select value={code} onChange={e => setCode(+e.target.value)}>{list.map(c => <option value={c.code} key={c.code}>{c.name}</option>)}</select></>}{kind === 2 && <><label>Modifiers</label><div className="modifier-row">{[['Ctrl',1],['Shift',2],['Alt',4],['Super',8]].map(([name,bit]) => <button key={String(name)} className={(mods & Number(bit)) ? 'selected' : ''} onClick={() => setMods(mods ^ Number(bit))}>{name}</button>)}</div></>}<div className="modal-actions"><button className="button subtle" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onSave(kind,code,mods)}>Save assignment</button></div></div></div>
+}
+
+function HapticsPage({notify}: {notify: (s: string, e?: boolean) => void}) {
+  const [data,setData] = useState<Haptics>(), [selected,setSelected] = useState(0)
+  const load = useCallback(async () => { try { setData(await api.haptics()) } catch(e) { notify(String(e), true) } }, [notify]); useEffect(() => { load() }, [load])
+  const change = (field: 'haptics'|'actuation'|'rapidTrigger', value: number) => setData(d => d ? {...d,buttons:d.buttons.map((b,i)=>i===selected?{...b,[field]:value}:b)} : d)
+  const save = async (field: string, value: number) => { try { await api.setHaptic(selected,field,value); notify('Haptic setting saved') } catch(e) { notify(String(e),true); load() } }
+  const button = data?.buttons[selected]
+  if (!data || !button) return <Loader text="Reading analog switch settings"/>
+  return <div className="haptics-mapper page-enter">
+    <section className="haptics-device-panel">
+      <header><span>ANALOG SWITCH ENGINE</span><h1>Haptic response</h1><p>Select a primary button to tune its physical response.</p></header>
+      <div className="haptics-mouse"><MouseArt interactive selected={selected} visibleMarkers={[0,1]} onSelect={index=>setSelected(index)}/></div>
+      <nav className="haptic-button-picker">{data.buttons.map((item,index)=><button key={item.index} className={selected===index?'selected':''} onClick={()=>setSelected(index)}><i>{index+1}</i><span><strong>{item.name.replace(' Button','')}</strong><small>{item.haptics===0?'Haptics off':`Haptics ${item.haptics}/${data.maxHaptics}`}</small></span></button>)}</nav>
+      <div className="haptic-live-readout"><div><span>SELECTED CONTROL</span><strong>{button.name}</strong></div><div><span>CLICK INTENSITY</span><strong>{button.haptics===0?'OFF':`${button.haptics} / ${data.maxHaptics}`}</strong></div></div>
+    </section>
+    <aside className="haptics-settings-panel">
+      <header><div><span>BUTTON SETTINGS</span><h2>{button.name}</h2><p>Changes apply directly to the switch controller.</p></div><i>{selected+1}</i></header>
+      <div className="haptic-settings-list"><Slider title="Click haptics" description="Strength of the physical click response" min={0} max={data.maxHaptics} value={button.haptics} onChange={v=>change('haptics',v)} onCommit={v=>save('haptics',v)}/><Slider title="Actuation point" description="How far the switch travels before activating" min={1} max={data.maxActuation} value={button.actuation} onChange={v=>change('actuation',v)} onCommit={v=>save('actuation',v)}/><Slider title="Rapid trigger" description="Reset sensitivity for repeated presses" min={1} max={data.maxRapidTrigger} value={button.rapidTrigger} onChange={v=>change('rapidTrigger',v)} onCommit={v=>save('rapidTrigger',v)}/></div>
+      <footer><Icon name="haptics"/><div><strong>Onboard switch control</strong><span>Settings take effect immediately and remain on the mouse.</span></div></footer>
+    </aside>
+  </div>
+}
+
+function Slider({title,description,min,max,value,onChange,onCommit}: {title:string;description:string;min:number;max:number;value:number;onChange:(v:number)=>void;onCommit:(v:number)=>void}) { return <div className="haptic-setting-row"><div><span>{title}</span><small>{description}</small></div><strong>{value}</strong><input className="range" type="range" min={min} max={max} step="1" value={value} onChange={e=>onChange(+e.target.value)} onMouseUp={e=>onCommit(+(e.target as HTMLInputElement).value)} onKeyUp={e=>onCommit(+(e.target as HTMLInputElement).value)}/><div className="range-scale"><span>{min}</span><span>{max}</span></div></div> }
+function Loader({text}: {text:string}) { return <div className="loader"><i/><span>{text}</span></div> }
+
+export default function App() {
+  const [page,setPage] = useState<Page>('dashboard'), [state,setState] = useState<DeviceState>({connected:false,permissionDenied:false,name:'',path:'',battery:0,charging:false,hasBattery:false,profile:'',dpiX:0,dpiY:0,pollingRate:0,configuredPollingRate:0,profileRed:0,profileGreen:0,profileBlue:0}), [toasts,setToasts] = useState<Toast[]>([])
+  const notify = useCallback((text:string,error=false) => { const id=Date.now(); setToasts(t=>[...t,{id,text,error}]); setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),3200) },[])
+  useEffect(() => { api.state().then(setState).catch(()=>{}); const off=onDeviceUpdate(setState); return () => off?.() },[])
+  const nav = useMemo(() => [{id:'dashboard' as Page,label:'Home'},{id:'dpi' as Page,label:'DPI'},{id:'profiles' as Page,label:'Profiles'},{id:'buttons' as Page,label:'Button Mapping'},{id:'haptics' as Page,label:'Haptics'}],[])
+  const view = page === 'dashboard' ? <Dashboard state={state} notify={notify}/> : !state.connected ? <EmptyState state={state}/> : page === 'dpi' ? <DPIPage notify={notify}/> : page === 'profiles' ? <ProfilesPage notify={notify}/> : page === 'buttons' ? <Buttons notify={notify}/> : <HapticsPage notify={notify}/>
+  const dpi = state.dpiX === state.dpiY ? state.dpiX : `${state.dpiX}/${state.dpiY}`
+  return <div className="hub-shell">
+    <section className="hub-workspace">
+      <header className="hub-header">
+        <div className="app-wordmark">SUPERSTRIKE</div>
+        <div className="device-heading"><strong>{state.connected ? friendlyDeviceName(state.name) : 'PRO X2 Superstrike'}</strong></div>
+        <nav className="feature-tabs">{nav.map(n=><button key={n.id} className={page===n.id?'active':''} onClick={()=>setPage(n.id)}><span>{n.label}</span></button>)}</nav>
+      </header>
+      <main className="content">{view}</main>
+      <footer className="device-strip">
+        <div className="strip-tile"><Icon name="signal"/><strong>{state.configuredPollingRate ? `${state.configuredPollingRate} Hz` : '—'}</strong></div>
+        <div className="strip-tile"><i className="profile-color" style={{background:`rgb(${state.profileRed},${state.profileGreen},${state.profileBlue})`}}/><strong>{state.connected ? dpi : '—'}</strong><span>DPI</span></div>
+        <div className="battery-strip"><Icon name="battery"/><i><b style={{width: `${state.hasBattery ? state.battery : 0}%`}}/></i><strong>{state.hasBattery ? `${state.battery}%` : '—'}</strong></div>
+        <div className="strip-state"><span className={`strip-dot ${state.connected ? 'online' : ''}`}/>{state.connected ? 'Device ready' : 'Searching'}</div>
+        <div className="strip-profile"><span>Profile</span><strong>{friendlyName(state.profile, '—')}</strong></div>
+      </footer>
+    </section>
+    <div className="toast-stack">{toasts.map(t=><div key={t.id} className={`toast ${t.error?'error':''}`}><span>{t.error?'!':'✓'}</span>{t.text}</div>)}</div>
+  </div>
+}

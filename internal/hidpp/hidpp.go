@@ -218,4 +218,3 @@ func (d *Device) read(deadline time.Time) ([]byte, error) {
 		return buf[:nr], nil
 	}
 }
-

@@ -18,7 +18,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"superstrike/internal/hidpp"
-	"superstrike/internal/ui"
 )
 
 func main() {
@@ -41,7 +40,7 @@ func main() {
 	case *scan:
 		runScan()
 	default:
-		ui.Run()
+		runDesktop()
 	}
 }
 

@@ -6,3 +6,5 @@ superstrike
 # editor / OS cruft
 *.swp
 .DS_Store
+frontend/node_modules/
+.tools/
