@@ -87,7 +87,11 @@ This unit: slots → sectors `0x0001..0x0005`, `enabled` = `0x01`/`0x00`.
 To enable/disable a profile, flip the `enabled` byte (offset `slot*4+2`),
 recompute CRC, write the sector.
 
-### Profile sector layout (size 255)
+### Profile sector layouts (size 255)
+
+Two layouts have now been observed and are detected from their contents.
+
+#### Configured/LIGHTSPEED layout
 
 | Offset | Field |
 |---|---|
@@ -110,6 +114,39 @@ Caveats specific to this device vs Solaar's generic layout:
   X/Y here. The other DPI words are disabled/placeholder slots (e.g. `0xEE00`,
   `0x2000`).
 - The **button table is at offset 48**, not Solaar's generic 32.
+
+#### Pristine/wired factory layout
+
+A wired unit that had never been configured by G HUB used five 5-byte DPI
+entries beginning at offset 4:
+
+```
+[Xlo, Xhi, Ylo, Yhi, 0x02]
+```
+
+The low `0x02` bit marks an enabled stage; clearing that bit removes the stage
+from the device's Next/Previous/Cycle DPI sequence. Byte 1 selects the default
+stage loaded with the profile. At least one stage must remain enabled.
+
+The factory ladder was 800, 1200, 1600, 2400 and 3200 DPI. Its current profile
+was ROM sector `0x0101`; RAM control sector `0x0000` was entirely `0xFF`, so no
+editable RAM profiles existed. Factory ROM profiles may end in `0xFFFF` rather
+than a stored CCITT CRC and must not be rejected solely for that reason.
+
+On the first edit, the app clones the active ROM sector into RAM, patches only
+the requested stage, writes a valid CCITT CRC, creates a minimal RAM control
+table pointing at the new enabled profile, and selects that RAM sector.
+Subsequent edits use the normal read/patch/CRC/write path.
+
+Selecting a stage from the desktop app is separate from editing these bytes.
+The mouse's current stage is volatile state and is not exposed by the profile
+sector. To select a DPI immediately, the app enters host mode and writes the
+live value through Extended Adjustable DPI (`0x2202`). Onboard control is
+restored when the app exits; the five stored stages are not changed.
+
+Live selection must not use the profile-edit path: rewriting a sector and
+reloading it is slow and briefly loads the factory DPI. The DPI-page circle
+therefore calls only `0x2202`; the row's Save control handles persistence.
 
 ### Report-rate byte encoding (the surprising one)
 

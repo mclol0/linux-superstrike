@@ -396,6 +396,30 @@ nav .icon { width: 17px; height: 17px; }
   border-bottom: 1px solid #2a2a2c; background: #202022; transition: background .15s;
 }
 .dpi-stage-row.local { grid-template-columns: 24px 18px 32px 104px 12px minmax(100px,1fr) 62px 46px 12px minmax(90px,.8fr) 62px 26px; }
+.dpi-stage-head {
+  display: grid; grid-template-columns: 86px 1fr 126px; padding: 0 14px 9px;
+  color: var(--hub-fg-35); font-size: 9px; letter-spacing: .08em; text-transform: uppercase;
+}
+.dpi-stage-head span:nth-child(2) { padding-left: 8px; }
+.dpi-stage-head span:last-child { text-align: center; }
+.dpi-stage-row.onboard {
+  grid-template-columns: 20px 42px minmax(180px,1fr) 78px 28px 58px 54px;
+  min-height: 70px; gap: 12px; padding: 10px 14px;
+}
+.dpi-stage-row.onboard.disabled { opacity: 1; }
+.dpi-stage-row.onboard.disabled > :not(.dpi-stage-switch):not(.dpi-stage-index) { opacity: .34; }
+.dpi-stage-index {
+  display: grid; place-items: center; width: 34px; height: 34px; border-left: 3px solid;
+  color: #fff; background: #29292b; font-size: 12px; font-weight: 600;
+}
+.dpi-unit { color: var(--hub-fg-35); font-size: 9px; }
+.dpi-stage-switch { justify-self: center; }
+.dpi-row-save {
+  height: 30px; border: 1px solid var(--hub-fg-12); color: #fff; background: #2c2c2f;
+  font-size: 10px; cursor: pointer;
+}
+.dpi-row-save:hover:not(:disabled) { background: #363639; }
+.dpi-row-save:disabled { opacity: .25; cursor: default; }
 .dpi-stage-row:last-child { border-bottom: 0; }
 .dpi-stage-row:hover, .dpi-stage-row.selected { background: #262628; }
 .dpi-stage-row.selected { box-shadow: inset 3px 0 var(--hub-blue); }
@@ -439,6 +463,14 @@ nav .icon { width: 17px; height: 17px; }
 .dpi-local-status span { color: var(--hub-fg-35); font-size: 8px; letter-spacing: .07em; }
 .dpi-local-status strong { margin-top: 7px; font-size: 12px; font-weight: 550; }
 .dpi-local-status small { margin-top: 4px; color: var(--hub-fg-60); font-size: 10px; }
+.dpi-unsupported { height: 100%; padding: 50px; background: #1e1e20; }
+.dpi-unsupported h1 { margin: 0 0 8px; font-size: 24px; }
+.dpi-unsupported p { color: var(--hub-fg-60); }
+
+@media (max-width: 1120px) {
+  .dpi-stage-row.onboard { grid-template-columns: 20px 36px minmax(120px,1fr) 70px 24px 52px; }
+  .dpi-row-save { display: none; }
+}
 
 /* Dedicated onboard profile manager. */
 .profiles-hub-page { height: 100%; padding: 30px 34px; overflow: auto; background: #151515; }

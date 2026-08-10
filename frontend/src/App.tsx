@@ -1,13 +1,12 @@
 import { type ReactElement, useCallback, useEffect, useMemo, useState } from 'react'
-import { api, ButtonPayload, Choices, DeviceState, Haptics, onDeviceUpdate, Profile } from './backend'
+import { api, ButtonPayload, Choices, DeviceState, DPIStage, Haptics, onDeviceUpdate, Profile } from './backend'
 import productImage from './productImage'
 import productSideImage from './productSideImage'
 
 type Page = 'dashboard' | 'dpi' | 'profiles' | 'buttons' | 'haptics'
 type Toast = { id: number; text: string; error?: boolean }
-type QuickDPI = { id:string; name:string; x:number; y:number; linked:boolean; color:string }
 const rates = [8000, 4000, 2000, 1000, 500, 250, 125]
-const dpiPresetKey = 'superstrike.quick-dpi.v1'
+const dpiColors = ['#ff4a43','#30dc72','#2788ff','#ff7a24','#b54cff']
 
 function friendlyName(value: string | undefined, fallback: string) {
   if (!value) return fallback
@@ -96,34 +95,33 @@ function Dashboard({state, notify}: {state: DeviceState; notify: (s: string, e?:
 
 function DPIPage({notify}: {notify: (s: string, e?: boolean) => void}) {
   const [activeProfile,setActiveProfile] = useState<Profile>()
-  const [presets,setPresets] = useState<QuickDPI[]>([]), [selectedId,setSelectedId] = useState('')
-  const [busy,setBusy] = useState(true), [hydrated,setHydrated] = useState(false), [applying,setApplying] = useState(false)
-  const load = useCallback(async()=>{setBusy(true);try{const list=await api.profiles();const active=list.find(profile=>profile.active)||list[0];setActiveProfile(active);if(!hydrated&&active){let stored:QuickDPI[]=[];try{const parsed=JSON.parse(localStorage.getItem(dpiPresetKey)||'[]');if(Array.isArray(parsed))stored=parsed.filter(item=>item&&typeof item.id==='string'&&typeof item.x==='number'&&typeof item.y==='number')}catch{}if(!stored.length){const color='#'+[active.red,active.green,active.blue].map(value=>value.toString(16).padStart(2,'0')).join('');stored=[{id:'preset-'+Date.now(),name:'Current DPI',x:active.dpiX,y:active.dpiY,linked:active.dpiX===active.dpiY,color}]}setPresets(stored);setSelectedId(stored[0].id);setHydrated(true)}}catch(error){notify(String(error),true)}finally{setBusy(false)}},[notify,hydrated])
+  const [drafts,setDrafts] = useState<DPIStage[]>([]), [selected,setSelected] = useState(0)
+  const [busy,setBusy] = useState(true), [saving,setSaving] = useState<number>()
+  const load = useCallback(async()=>{setBusy(true);try{const list=await api.profiles();const active=list.find(profile=>profile.active)||list[0];setActiveProfile(active);setDrafts(active?.dpiStages||[]);if(active)setSelected(active.currentDpiStage>=0?active.currentDpiStage:active.defaultDpiStage)}catch(error){notify(String(error),true)}finally{setBusy(false)}},[notify])
   useEffect(()=>{load()},[load])
-  useEffect(()=>{if(hydrated)localStorage.setItem(dpiPresetKey,JSON.stringify(presets))},[presets,hydrated])
-  const updatePreset=(id:string,change:Partial<QuickDPI>)=>setPresets(current=>current.map(preset=>{if(preset.id!==id)return preset;const next={...preset,...change};if(next.linked&&change.x!==undefined)next.y=change.x;return next}))
-  const selectedPreset=presets.find(preset=>preset.id===selectedId)||presets[0]
-  const appliedId=presets.find(preset=>activeProfile&&preset.x===activeProfile.dpiX&&(preset.linked?preset.x:preset.y)===activeProfile.dpiY)?.id
-  const applyPreset=async(preset:QuickDPI)=>{if(!activeProfile||applying)return;setApplying(true);const x=Math.max(100,Math.min(44000,preset.x));const y=Math.max(100,Math.min(44000,preset.linked?x:preset.y));try{await api.updateDPI(activeProfile.sector,x,y);setActiveProfile({...activeProfile,dpiX:x,dpiY:y});notify((preset.name||'DPI preset')+' applied')}catch(error){notify(String(error),true)}finally{setApplying(false)}}
-  const addPreset=()=>{const source=selectedPreset||{x:activeProfile?.dpiX||800,y:activeProfile?.dpiY||800,linked:true,color:'#108cff'};const preset:QuickDPI={id:'preset-'+Date.now()+'-'+Math.random().toString(16).slice(2),name:'Preset '+(presets.length+1),x:source.x,y:source.y,linked:source.linked,color:source.color};setPresets(current=>[...current,preset]);setSelectedId(preset.id)}
+  const edit=(index:number,value:number)=>setDrafts(current=>current.map(stage=>stage.index===index?{...stage,x:value,y:value}:stage))
+  const save=async(stage:DPIStage,enabled=stage.enabled,makeDefault=false)=>{if(!activeProfile||saving!==undefined)return;setSaving(stage.index);try{await api.updateDPIStage(activeProfile.sector,stage.index,Math.max(100,Math.min(44000,stage.x)),Math.max(100,Math.min(44000,stage.y)),enabled,makeDefault);notify(makeDefault?`DPI slot ${stage.index+1} activated`:`DPI slot ${stage.index+1} saved to the mouse`);await load()}catch(error){notify(String(error),true)}finally{setSaving(undefined)}}
+  const selectStage=async(stage:DPIStage)=>{if(saving!==undefined||!stage.enabled)return;setSaving(stage.index);setSelected(stage.index);try{await api.selectDPI(stage.x);notify(`DPI slot ${stage.index+1} selected`);await load()}catch(error){notify(String(error),true)}finally{setSaving(undefined)}}
   if(busy&&!activeProfile)return <Loader text="Reading active profile"/>
   if(!activeProfile)return <EmptyState state={{connected:false,permissionDenied:false} as DeviceState}/>
+  if(!activeProfile.hasDpiStages)return <div className="dpi-unsupported"><h1>DPI stages unavailable</h1><p>This onboard profile uses an older layout that does not safely expose five independent stages.</p></div>
+  const selectedStage=drafts.find(stage=>stage.index===selected)||drafts[0]
   return <div className="dpi-hub-page page-enter">
     <main className="dpi-work-panel">
-      <header className="dpi-title"><div><h1>DPI</h1><p>Quick-swap presets stored locally on this PC.</p></div><div className="dpi-title-actions"><span>{presets.length} presets</span><button onClick={addPreset}>＋ Add preset</button></div></header>
-      <div className="dpi-stage-list">{presets.map((preset,index)=><div key={preset.id} className={`dpi-stage-row local ${selectedPreset?.id===preset.id?'selected':''}`} onClick={()=>setSelectedId(preset.id)}>
-        <button className={`dpi-active-radio ${appliedId===preset.id?'active':''}`} title="Apply this preset" disabled={applying} onClick={event=>{event.stopPropagation();applyPreset(preset)}} />
-        <span className="dpi-drag-mark">⠿</span>
-        <input className="dpi-color-input" type="color" value={preset.color} title="Preset color" onClick={event=>event.stopPropagation()} onChange={event=>updatePreset(preset.id,{color:event.target.value})}/>
-        <div className="dpi-stage-name"><input value={preset.name} maxLength={24} onClick={event=>event.stopPropagation()} onChange={event=>updatePreset(preset.id,{name:event.target.value})}/><small>LOCAL PRESET {String(index+1).padStart(2,'0')}</small></div>
-        <label className="dpi-axis-label">X</label><input className="dpi-stage-range" type="range" min="100" max="44000" step="100" value={preset.x} onChange={event=>updatePreset(preset.id,{x:+event.target.value})}/><input className="dpi-stage-number" type="number" min="100" max="44000" step="100" value={preset.x} onChange={event=>updatePreset(preset.id,{x:+event.target.value})}/>
-        <button className={`dpi-link-toggle ${preset.linked?'linked':''}`} title="Link X and Y" onClick={event=>{event.stopPropagation();updatePreset(preset.id,{linked:!preset.linked,y:preset.x})}}>{preset.linked?'Linked':'Split'}</button>
-        <label className="dpi-axis-label y">Y</label><input className="dpi-stage-range y" type="range" min="100" max="44000" step="100" disabled={preset.linked} value={preset.linked?preset.x:preset.y} onChange={event=>updatePreset(preset.id,{y:+event.target.value})}/><input className="dpi-stage-number y" type="number" min="100" max="44000" step="100" disabled={preset.linked} value={preset.linked?preset.x:preset.y} onChange={event=>updatePreset(preset.id,{y:+event.target.value})}/>
-        <button className="dpi-delete-preset" title="Delete preset" disabled={presets.length===1} onClick={event=>{event.stopPropagation();setPresets(current=>current.filter(item=>item.id!==preset.id));if(selectedId===preset.id)setSelectedId(presets.find(item=>item.id!==preset.id)?.id||'')}}>×</button>
+      <header className="dpi-title"><div><h1>DPI</h1><p>Five sensitivity slots stored directly on the mouse.</p></div><div className="dpi-title-actions"><span>{drafts.filter(stage=>stage.enabled).length} / 5 enabled</span></div></header>
+      <div className="dpi-stage-head"><span>Slot</span><span>DPI</span><span>Enabled</span></div>
+      <div className="dpi-stage-list">{drafts.map(stage=><div key={stage.index} className={`dpi-stage-row onboard ${selected===stage.index?'selected':''} ${!stage.enabled?'disabled':''}`} onClick={()=>setSelected(stage.index)}>
+        <button className={`dpi-active-radio ${activeProfile.currentDpiStage===stage.index?'active':''}`} title="Select this DPI now" disabled={!stage.enabled||saving!==undefined} onClick={event=>{event.stopPropagation();selectStage(stage)}} />
+        <span className="dpi-stage-index" style={{borderColor:dpiColors[stage.index]}}>{stage.index+1}</span>
+        <input className="dpi-stage-range" type="range" min="100" max="44000" step="50" disabled={!stage.enabled||saving!==undefined} value={stage.x} onChange={event=>edit(stage.index,+event.target.value)} onPointerUp={event=>{const value=+event.currentTarget.value;save({...stage,x:value,y:value})}} />
+        <input className="dpi-stage-number" type="number" min="100" max="44000" step="50" disabled={!stage.enabled||saving!==undefined} value={stage.x} onChange={event=>edit(stage.index,+event.target.value)} onBlur={()=>save(stage)} onKeyDown={event=>{if(event.key==='Enter')save(stage)}}/>
+        <span className="dpi-unit">DPI</span>
+        <button className={`switch dpi-stage-switch ${stage.enabled?'on':''}`} disabled={saving!==undefined} onClick={event=>{event.stopPropagation();save(stage,!stage.enabled,false)}}><i/></button>
+        <button className="dpi-row-save" disabled={!stage.enabled||saving!==undefined} onClick={event=>{event.stopPropagation();save(stage)}}>{saving===stage.index?'Saving…':'Save'}</button>
       </div>)}</div>
-      <p className="dpi-save-note">Preset edits save automatically on this computer. Click the circle beside a preset to apply it to the active profile.</p>
+      <p className="dpi-save-note">The filled circle marks the DPI currently reported by the mouse. Assign Next DPI, Previous DPI, or Cycle DPI to a mouse button to move through enabled slots.</p>
     </main>
-    <aside className="dpi-product-panel"><MouseArt/><div><strong>{selectedPreset?.name||'Quick DPI'}</strong><span>{selectedPreset?(selectedPreset.linked||selectedPreset.x===selectedPreset.y?selectedPreset.x:`${selectedPreset.x} × ${selectedPreset.y}`):'—'} DPI</span></div><section className="dpi-local-status"><span>ACTIVE ONBOARD PROFILE</span><strong>{friendlyName(activeProfile.name,`Profile ${activeProfile.index}`)}</strong><small>{activeProfile.dpiX===activeProfile.dpiY?activeProfile.dpiX:`${activeProfile.dpiX} × ${activeProfile.dpiY}`} DPI</small></section></aside>
+    <aside className="dpi-product-panel"><MouseArt/><div><strong>DPI slot {selectedStage?.index+1}</strong><span>{selectedStage?.x||'—'} DPI</span></div><section className="dpi-local-status"><span>ACTIVE ONBOARD PROFILE</span><strong>{friendlyName(activeProfile.name,`Profile ${activeProfile.index}`)}</strong><small>{drafts.filter(stage=>stage.enabled).length} enabled stages · slot {(activeProfile.currentDpiStage>=0?activeProfile.currentDpiStage:activeProfile.defaultDpiStage)+1} active</small></section></aside>
   </div>
 }
 

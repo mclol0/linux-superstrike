@@ -25,13 +25,19 @@ const MaxDPI = 44000
 //	fn7 write  (0x70) : 16 data bytes
 //	fn8 commit (0x80)
 //
-// Profile sector layout (little-endian DPI words):
+// Profile sector layouts seen in the field:
 //
-//	[0]      report rate
-//	[1]      active resolution (DPI stage) index
-//	[2]      shift resolution index
-//	[3..12]  five DPI stages, uint16 LE each
-//	[13..15] red, green, blue
+//	Legacy/configured: [3..12] five uint16 LE words, active X/Y at 9..12.
+//	Pristine/wired:    [4..28] five [Xlo,Xhi,Ylo,Yhi,0x02] stages.
+//
+// Factory profiles may live in ROM sectors 0x0101.. and have 0xFFFF instead
+// of a trailing CRC. Before editing one we clone it into the corresponding RAM
+// sector, add a valid CRC and a minimal RAM control table, then activate it.
+//
+// Common fields:
+//
+//	[0] report rate
+//	[1] active resolution index
 //	[size-2..] CRC-16/CCITT
 
 var crc16Table [256]uint16
@@ -68,32 +74,38 @@ type ProfileInfo struct {
 
 // Profile is the decoded, editable view of one profile sector.
 //
-// This mouse stores separate X and Y DPI for the active resolution. raw[1] is
-// the resolution index, and it points at the X slot of the five uint16 DPI
-// words (raw[3..12]); Y is the next word. The other slots hold disabled /
-// placeholder resolutions (0xEE00, 0x2000, …), so we expose only the live X/Y.
+// Configured and pristine firmware have different DPI layouts. The decoder
+// detects both and exposes their effective X/Y value through the same fields.
 type Profile struct {
-	Index      int    // 1-based slot number
-	Sector     int    // memory sector holding this profile
-	Enabled    bool   // whether the slot is enabled in the control sector
-	Name       string // UTF-16LE profile name
+	Index        int    // 1-based slot number
+	Sector       int    // memory sector holding this profile
+	Enabled      bool   // whether the slot is enabled in the control sector
+	Name         string // UTF-16LE profile name
 	Raw          []byte // the full sector, including CRC — patch this then write
 	ReportRate   byte   // raw byte 0 (power-of-two rate code)
 	ReportRateHz int    // decoded polling rate in Hz
 	ResIndex     int    // raw[1]: resolution index
-	DPIX       int    // active resolution X DPI
-	DPIY       int    // active resolution Y DPI
-	DPI        [5]int // raw resolution words (diagnostic)
-	Red        byte
-	Green      byte
-	Blue       byte
-	Buttons    [16]ButtonAction // decoded button slots (bytes 32..95)
+	DPIX         int    // active resolution X DPI
+	DPIY         int    // active resolution Y DPI
+	DPI          [5]int // raw resolution words (diagnostic)
+	DPIStages    [5]DPIStage
+	HasDPIStages bool
+	Red          byte
+	Green        byte
+	Blue         byte
+	Buttons      [16]ButtonAction // decoded button slots (bytes 32..95)
 }
 
-// The active resolution's X and Y DPI are stored in the last two of the five
-// DPI words — X at slot 3 (sector bytes 9..10), Y at slot 4 (bytes 11..12).
-// (raw[1] is a resolution index that does NOT line up with these slots, so we
-// address them directly.)
+// DPIStage is one of the five resolutions the mouse can cycle through.
+type DPIStage struct {
+	Index   int
+	X       int
+	Y       int
+	Enabled bool
+}
+
+// In the legacy/configured layout the active X and Y values are the last two
+// of five uint16 words at bytes 9..12.
 const (
 	dpiXSlot = 3
 	dpiYSlot = 4
@@ -126,11 +138,33 @@ func rateByteForHz(hz int) (byte, bool) {
 // come from the control sector).
 func decodeProfile(sector int, raw []byte) Profile {
 	p := Profile{Sector: sector, Raw: raw, ReportRate: raw[0], ReportRateHz: hzForRateByte(raw[0]), ResIndex: int(raw[1])}
-	for i := 0; i < 5; i++ {
-		p.DPI[i] = int(raw[3+i*2]) | int(raw[4+i*2])<<8 // little-endian
+	if profileUsesFiveByteDPI(raw) {
+		p.HasDPIStages = true
+		for i := 0; i < 5; i++ {
+			off := 4 + i*5
+			x := int(raw[off]) | int(raw[off+1])<<8
+			y := int(raw[off+2]) | int(raw[off+3])<<8
+			p.DPI[i] = x
+			p.DPIStages[i] = DPIStage{Index: i, X: x, Y: y, Enabled: raw[off+4]&0x02 != 0}
+			if i == p.ResIndex && p.DPIStages[i].Enabled {
+				p.DPIX, p.DPIY = x, y
+			}
+		}
+		if p.DPIX == 0 {
+			for _, stage := range p.DPIStages {
+				if stage.Enabled {
+					p.DPIX, p.DPIY = stage.X, stage.Y
+					break
+				}
+			}
+		}
+	} else {
+		for i := 0; i < 5; i++ {
+			p.DPI[i] = int(raw[3+i*2]) | int(raw[4+i*2])<<8
+		}
+		p.DPIX, p.DPIY = p.DPI[dpiXSlot], p.DPI[dpiYSlot]
+		p.Red, p.Green, p.Blue = raw[13], raw[14], raw[15]
 	}
-	p.DPIX, p.DPIY = p.DPI[dpiXSlot], p.DPI[dpiYSlot]
-	p.Red, p.Green, p.Blue = raw[13], raw[14], raw[15]
 	for i := 0; i < 16; i++ {
 		off := profileButtonsOffset + i*4
 		if off+4 <= len(raw) {
@@ -139,6 +173,82 @@ func decodeProfile(sector int, raw []byte) Profile {
 	}
 	p.Name = decodeProfileName(raw)
 	return p
+}
+
+func profileUsesFiveByteDPI(raw []byte) bool {
+	if len(raw) < 29 {
+		return false
+	}
+	valid := 0
+	for i := 0; i < 5; i++ {
+		off := 4 + i*5
+		x := int(raw[off]) | int(raw[off+1])<<8
+		y := int(raw[off+2]) | int(raw[off+3])<<8
+		if x >= 100 && x <= MaxDPI && y >= 100 && y <= MaxDPI {
+			valid++
+		}
+	}
+	return valid >= 3
+}
+
+func patchResolution(raw []byte, x, y int) error {
+	if profileUsesFiveByteDPI(raw) {
+		stage := int(raw[1])
+		if stage < 0 || stage > 4 {
+			stage = 0
+		}
+		return patchDPIStage(raw, stage, x, y, true, true)
+	}
+	if len(raw) < 13 {
+		return fmt.Errorf("profile sector too small for DPI fields")
+	}
+	raw[3+dpiXSlot*2], raw[4+dpiXSlot*2] = byte(x), byte(x>>8)
+	raw[3+dpiYSlot*2], raw[4+dpiYSlot*2] = byte(y), byte(y>>8)
+	return nil
+}
+
+func patchDPIStage(raw []byte, stage, x, y int, enabled, makeDefault bool) error {
+	if !profileUsesFiveByteDPI(raw) {
+		return fmt.Errorf("this profile does not expose five editable DPI stages")
+	}
+	if stage < 0 || stage > 4 {
+		return fmt.Errorf("DPI stage %d is out of range", stage+1)
+	}
+	if !enabled {
+		enabledCount := 0
+		for i := 0; i < 5; i++ {
+			off := 4 + i*5
+			if i != stage && raw[off+4]&0x02 != 0 {
+				enabledCount++
+			}
+		}
+		if enabledCount == 0 {
+			return fmt.Errorf("at least one DPI stage must remain enabled")
+		}
+	}
+	off := 4 + stage*5
+	raw[off], raw[off+1] = byte(x), byte(x>>8)
+	raw[off+2], raw[off+3] = byte(y), byte(y>>8)
+	if enabled {
+		raw[off+4] |= 0x02
+	} else {
+		raw[off+4] &^= 0x02
+		if int(raw[1]) == stage {
+			for i := 0; i < 5; i++ {
+				if raw[4+i*5+4]&0x02 != 0 {
+					raw[1] = byte(i)
+					break
+				}
+			}
+		}
+	}
+	if makeDefault {
+		if !enabled {
+			return fmt.Errorf("a disabled DPI stage cannot be the default")
+		}
+		raw[1] = byte(stage)
+	}
+	return nil
 }
 
 // decodeProfileName reads the UTF-16LE name at bytes 160..208.
@@ -217,9 +327,16 @@ func (d *Device) profileHeaders(idx byte, count int) ([]struct {
 			break
 		}
 		sector := int(raw[i])<<8 | int(raw[i+1])
-		// On this device profile sectors are 1..count; anything else means we've
-		// walked into garbage from a partial read — stop.
-		if sector < 1 || sector > count {
+		minSector, maxSector := 1, count
+		if page == 0x01 {
+			// Some firmware stores page-relative 0x0001.. entries in the ROM
+			// control table; normalize them to the absolute 0x0101.. sectors.
+			if sector >= 1 && sector <= count {
+				sector += 0x0100
+			}
+			minSector, maxSector = 0x0101, 0x0100+count
+		}
+		if sector < minSector || sector > maxSector {
 			break
 		}
 		out = append(out, struct {
@@ -228,6 +345,24 @@ func (d *Device) profileHeaders(idx byte, count int) ([]struct {
 		}{Sector: sector, Enabled: raw[i+2] == 0x01})
 	}
 	return out, nil
+}
+
+func validProfileSector(sector, count int) bool {
+	return sector >= 1 && sector <= count || sector >= 0x0101 && sector <= 0x0100+count
+}
+
+func (d *Device) readProfileSector(idx byte, sector, size int) ([]byte, error) {
+	if sector >= 0x0100 {
+		raw, err := d.readSector(idx, sector, size)
+		if err != nil {
+			return nil, err
+		}
+		if allEq(raw, 0xFF) || allEq(raw, 0x00) {
+			return nil, fmt.Errorf("profile sector 0x%04X is blank", sector)
+		}
+		return raw, nil
+	}
+	return d.readSectorChecked(idx, sector, size)
 }
 
 // readSectorChecked reads a sector and verifies its trailing CRC-16, retrying a
@@ -350,7 +485,7 @@ func (d *Device) Profiles() ([]Profile, error) {
 	}
 	out := make([]Profile, 0, len(headers))
 	for i, h := range headers {
-		raw, rerr := d.readSectorChecked(idx, h.Sector, info.SectorSize)
+		raw, rerr := d.readProfileSector(idx, h.Sector, info.SectorSize)
 		if rerr != nil {
 			continue // skip a transiently-bad slot rather than show garbage
 		}
@@ -374,7 +509,7 @@ func (d *Device) ActiveProfile() (Profile, error) {
 		return Profile{}, err
 	}
 	sector, cerr := d.CurrentProfileSector()
-	if cerr != nil || sector < 1 || sector > info.Count {
+	if cerr != nil || !validProfileSector(sector, info.Count) {
 		headers, herr := d.profileHeaders(idx, info.Count)
 		if herr != nil || len(headers) == 0 {
 			return Profile{}, fmt.Errorf("no onboard profiles: %v", herr)
@@ -387,7 +522,7 @@ func (d *Device) ActiveProfile() (Profile, error) {
 			}
 		}
 	}
-	raw, err := d.readSectorChecked(idx, sector, info.SectorSize)
+	raw, err := d.readProfileSector(idx, sector, info.SectorSize)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -444,13 +579,70 @@ func (d *Device) WriteProfileResolution(sector, x, y int) error {
 	if x < 100 || x > MaxDPI || y < 100 || y > MaxDPI {
 		return fmt.Errorf("DPI must be 100..%d", MaxDPI)
 	}
-	return d.patchProfileSector(sector, func(raw []byte) error {
-		raw[3+dpiXSlot*2] = byte(x & 0xFF)
-		raw[4+dpiXSlot*2] = byte(x >> 8)
-		raw[3+dpiYSlot*2] = byte(y & 0xFF)
-		raw[4+dpiYSlot*2] = byte(y >> 8)
-		return nil
+	actual, err := d.patchProfileSectorResolved(sector, func(raw []byte) error {
+		return patchResolution(raw, x, y)
 	})
+	if err != nil {
+		return err
+	}
+	return d.ReloadProfile(actual)
+}
+
+// WriteProfileDPIStage edits one of the five onboard DPI stages. Enabled
+// stages are included when a button assigned to Next/Previous/Cycle DPI is
+// pressed. makeDefault also selects the stage loaded when the profile starts.
+func (d *Device) WriteProfileDPIStage(sector, stage, x, y int, enabled, makeDefault bool) error {
+	if x < 100 || x > MaxDPI || y < 100 || y > MaxDPI {
+		return fmt.Errorf("DPI must be 100..%d", MaxDPI)
+	}
+	actual, err := d.patchProfileSectorResolved(sector, func(raw []byte) error {
+		return patchDPIStage(raw, stage, x, y, enabled, makeDefault)
+	})
+	if err != nil {
+		return err
+	}
+	if err := d.ReloadProfile(actual); err != nil {
+		return err
+	}
+	if makeDefault {
+		return d.activateLiveDPI(x)
+	}
+	return nil
+}
+
+// activateLiveDPI changes the sensor's current value without replacing the
+// five onboard stages. The extended DPI setter is ignored while an onboard
+// profile owns the sensor, so hand control to the host and keep it there while
+// the desktop app is open. Shutdown restores onboard control.
+func (d *Device) activateLiveDPI(dpi int) error {
+	lod := byte(0)
+	if info, err := d.DPI(); err == nil {
+		lod = info.LOD
+	}
+	mode, _ := d.OnboardMode()
+	if mode != OnboardModeHost {
+		if err := d.SetOnboardMode(OnboardModeHost); err != nil {
+			return fmt.Errorf("enter host control to select DPI: %w", err)
+		}
+		// Mode changes are acknowledged before the sensor has finished changing
+		// owners. Writing immediately can be accepted but silently discarded.
+		time.Sleep(180 * time.Millisecond)
+	}
+	if err := d.setDPIWithLOD(dpi, lod); err != nil {
+		_ = d.SetOnboardMode(OnboardModeOnboard)
+		return fmt.Errorf("select live DPI: %w", err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	return nil
+}
+
+// SelectLiveDPI changes only the mouse's current sensitivity. It does not
+// rewrite, verify, or reload the onboard profile sector.
+func (d *Device) SelectLiveDPI(dpi int) error {
+	if dpi < 100 || dpi > MaxDPI {
+		return fmt.Errorf("DPI must be 100..%d", MaxDPI)
+	}
+	return d.activateLiveDPI(dpi)
 }
 
 // SetProfileEnabled flips the enabled flag for the profile at the given 1-based
@@ -469,6 +661,20 @@ func (d *Device) SetProfileEnabled(index int, enabled bool) error {
 	ctrl, err := d.readSector(idx, 0x0000, info.SectorSize)
 	if err != nil {
 		return err
+	}
+	if len(ctrl) >= 4 && (allEq(ctrl[:4], 0x00) || allEq(ctrl[:4], 0xFF)) {
+		sector, serr := d.CurrentProfileSector()
+		if serr != nil || sector < 0x0101 {
+			return fmt.Errorf("no editable RAM profile is available")
+		}
+		if _, err := d.patchProfileSectorResolved(sector, func([]byte) error { return nil }); err != nil {
+			return err
+		}
+		ctrl, err = d.readSector(idx, 0x0000, info.SectorSize)
+		if err != nil {
+			return err
+		}
+		index = 1
 	}
 	pos := (index-1)*4 + 2
 	if pos >= len(ctrl)-2 {
@@ -522,10 +728,14 @@ func (d *Device) SetProfileReportRateHz(sector, hz int) error {
 	if !ok {
 		return fmt.Errorf("unsupported polling rate %d Hz", hz)
 	}
-	if err := d.SetProfileReportRate(sector, v); err != nil {
+	actual, err := d.patchProfileSectorResolved(sector, func(raw []byte) error {
+		raw[0] = v
+		return nil
+	})
+	if err != nil {
 		return err
 	}
-	return d.ReloadProfile(sector)
+	return d.ReloadProfile(actual)
 }
 
 // ReloadProfile forces the firmware to (re)apply a profile's settings by
@@ -546,6 +756,21 @@ func (d *Device) ReloadProfile(sector int) error {
 	if other != 0 {
 		_ = d.SetCurrentProfileSector(other)
 		time.Sleep(120 * time.Millisecond)
+	} else if sector > 0 && sector < 0x0100 {
+		// A pristine mouse initially runs the matching factory profile in ROM.
+		// Once it has been cloned to a single RAM slot, selecting that same RAM
+		// sector again is a no-op on some firmware. Bounce through the read-only
+		// factory counterpart so the edited sector is actually reloaded.
+		rom := 0x0100 | sector
+		if err := d.SetCurrentProfileSector(rom); err == nil {
+			time.Sleep(120 * time.Millisecond)
+		} else {
+			// Firmware that hides the ROM sector after RAM has been initialized
+			// still reloads the profile when onboard mode is re-entered.
+			_ = d.SetOnboardMode(OnboardModeHost)
+			time.Sleep(80 * time.Millisecond)
+			_ = d.SetOnboardMode(OnboardModeOnboard)
+		}
 	}
 	return d.SetCurrentProfileSector(sector)
 }
@@ -553,24 +778,61 @@ func (d *Device) ReloadProfile(sector int) error {
 // patchProfileSector reads a profile sector, applies mutate to a copy, and
 // writes it back with a fresh CRC.
 func (d *Device) patchProfileSector(sector int, mutate func(raw []byte) error) error {
+	_, err := d.patchProfileSectorResolved(sector, mutate)
+	return err
+}
+
+func (d *Device) patchProfileSectorResolved(sector int, mutate func(raw []byte) error) (int, error) {
 	idx, err := d.onboardIndex()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	info, err := d.ProfileInfo()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if info.SectorSize < 64 {
-		return fmt.Errorf("implausible sector size %d (device busy?) — retry", info.SectorSize)
+		return 0, fmt.Errorf("implausible sector size %d (device busy?) — retry", info.SectorSize)
 	}
-	raw, err := d.readSectorChecked(idx, sector, info.SectorSize)
+	raw, err := d.readProfileSector(idx, sector, info.SectorSize)
 	if err != nil {
-		return err
+		return 0, err
+	}
+	actual := sector
+	bootstrap := sector >= 0x0100
+	if bootstrap {
+		actual = sector & 0x00FF
+		if actual < 1 || actual > info.Count {
+			actual = 1
+		}
 	}
 	cp := append([]byte(nil), raw...)
 	if err := mutate(cp); err != nil {
-		return err
+		return 0, err
 	}
-	return d.writeSector(idx, sector, cp)
+	if err := d.writeSector(idx, actual, cp); err != nil {
+		return 0, err
+	}
+	if bootstrap {
+		if err := d.writeMinimalControlSector(idx, info.SectorSize, actual); err != nil {
+			return 0, err
+		}
+		if err := d.SetCurrentProfileSector(actual); err != nil {
+			return 0, err
+		}
+	}
+	return actual, nil
+}
+
+func (d *Device) writeMinimalControlSector(idx byte, size, sector int) error {
+	if size < 8 || sector < 1 || sector > 0xFF {
+		return fmt.Errorf("cannot create RAM profile control sector")
+	}
+	ctrl := make([]byte, size)
+	for i := range ctrl {
+		ctrl[i] = 0xFF
+	}
+	ctrl[0], ctrl[1], ctrl[2], ctrl[3] = 0x00, byte(sector), 0x01, 0x00
+	ctrl[4], ctrl[5] = 0xFF, 0xFF
+	return d.writeSector(idx, 0x0000, ctrl)
 }

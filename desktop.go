@@ -57,17 +57,28 @@ type DeviceState struct {
 }
 
 type ProfileDTO struct {
-	Index   int    `json:"index"`
-	Sector  int    `json:"sector"`
-	Enabled bool   `json:"enabled"`
-	Active  bool   `json:"active"`
-	Name    string `json:"name"`
-	DPIX    int    `json:"dpiX"`
-	DPIY    int    `json:"dpiY"`
-	Rate    int    `json:"pollingRate"`
-	Red     byte   `json:"red"`
-	Green   byte   `json:"green"`
-	Blue    byte   `json:"blue"`
+	Index           int           `json:"index"`
+	Sector          int           `json:"sector"`
+	Enabled         bool          `json:"enabled"`
+	Active          bool          `json:"active"`
+	Name            string        `json:"name"`
+	DPIX            int           `json:"dpiX"`
+	DPIY            int           `json:"dpiY"`
+	Rate            int           `json:"pollingRate"`
+	Red             byte          `json:"red"`
+	Green           byte          `json:"green"`
+	Blue            byte          `json:"blue"`
+	DPIStages       []DPIStageDTO `json:"dpiStages"`
+	DefaultDPIStage int           `json:"defaultDpiStage"`
+	CurrentDPIStage int           `json:"currentDpiStage"`
+	HasDPIStages    bool          `json:"hasDpiStages"`
+}
+
+type DPIStageDTO struct {
+	Index   int  `json:"index"`
+	X       int  `json:"x"`
+	Y       int  `json:"y"`
+	Enabled bool `json:"enabled"`
 }
 
 type ButtonDTO struct {
@@ -148,6 +159,7 @@ func (c *DesktopController) shutdown(context.Context) {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 	if c.dev != nil {
+		_ = c.dev.SetOnboardMode(hidpp.OnboardModeOnboard)
 		c.dev.Close()
 		c.dev = nil
 	}
@@ -232,6 +244,9 @@ func (c *DesktopController) GetDeviceState() DeviceState {
 			s.PollingRate = p.ReportRateHz
 		}
 	}
+	if dpi, err := c.dev.CurrentDPI(); err == nil && dpi > 0 {
+		s.DPIX, s.DPIY = dpi, dpi
+	}
 	return s
 }
 
@@ -246,11 +261,63 @@ func (c *DesktopController) GetProfiles() ([]ProfileDTO, error) {
 		return nil, err
 	}
 	active, _ := c.dev.CurrentProfileSector()
+	liveDPI, _ := c.dev.CurrentDPI()
+	activeFound := false
+	for _, p := range profiles {
+		if p.Sector == active {
+			activeFound = true
+			break
+		}
+	}
+	if !activeFound && len(profiles) > 0 {
+		// In host-control mode the device reports sector 0x0000 even though the
+		// previously loaded profile still owns the stored slots and mappings.
+		// There is normally one profile on a pristine Superstrike; otherwise use
+		// the first enabled slot as the association for the live DPI register.
+		active = profiles[0].Sector
+		for _, p := range profiles {
+			if p.Enabled {
+				active = p.Sector
+				break
+			}
+		}
+	}
 	out := make([]ProfileDTO, 0, len(profiles))
 	for _, p := range profiles {
-		out = append(out, ProfileDTO{p.Index, p.Sector, p.Enabled, p.Sector == active, p.Name, p.DPIX, p.DPIY, p.ReportRateHz, p.Red, p.Green, p.Blue})
+		stages := make([]DPIStageDTO, 0, len(p.DPIStages))
+		if p.HasDPIStages {
+			for _, stage := range p.DPIStages {
+				stages = append(stages, DPIStageDTO{Index: stage.Index, X: stage.X, Y: stage.Y, Enabled: stage.Enabled})
+			}
+		}
+		currentStage := -1
+		if p.Sector == active && liveDPI > 0 {
+			for _, stage := range p.DPIStages {
+				if stage.Enabled && stage.X == liveDPI {
+					currentStage = stage.Index
+					break
+				}
+			}
+		}
+		out = append(out, ProfileDTO{Index: p.Index, Sector: p.Sector, Enabled: p.Enabled, Active: p.Sector == active, Name: p.Name, DPIX: p.DPIX, DPIY: p.DPIY, Rate: p.ReportRateHz, Red: p.Red, Green: p.Green, Blue: p.Blue, DPIStages: stages, DefaultDPIStage: p.ResIndex, CurrentDPIStage: currentStage, HasDPIStages: p.HasDPIStages})
 	}
 	return out, nil
+}
+
+func (c *DesktopController) UpdateDPIStage(sector, stage, x, y int, enabled, makeDefault bool) error {
+	if x < 100 || x > hidpp.MaxDPI || y < 100 || y > hidpp.MaxDPI {
+		return fmt.Errorf("DPI must be between 100 and %d", hidpp.MaxDPI)
+	}
+	return c.withDevice(func(d *hidpp.Device) error {
+		return d.WriteProfileDPIStage(sector, stage, x, y, enabled, makeDefault)
+	})
+}
+
+func (c *DesktopController) SelectDPI(dpi int) error {
+	if dpi < 100 || dpi > hidpp.MaxDPI {
+		return fmt.Errorf("DPI must be between 100 and %d", hidpp.MaxDPI)
+	}
+	return c.withDevice(func(d *hidpp.Device) error { return d.SelectLiveDPI(dpi) })
 }
 
 func (c *DesktopController) UpdateDPI(sector, x, y int) error {

@@ -8,7 +8,9 @@ export type DeviceState = {
 export type Profile = {
   index: number; sector: number; enabled: boolean; active: boolean; name: string
   dpiX: number; dpiY: number; pollingRate: number; red: number; green: number; blue: number
+  dpiStages: DPIStage[]; defaultDpiStage: number; currentDpiStage: number; hasDpiStages: boolean
 }
+export type DPIStage = { index: number; x: number; y: number; enabled: boolean }
 
 export type ButtonAction = { Kind: number; Code: number; Mods: number; Raw: number[] }
 export type ButtonPayload = { profileName: string; sector: number; buttons: Array<{index: number; name: string; description: string; action: ButtonAction}> }
@@ -38,6 +40,8 @@ export const api = {
   state: () => invoke<DeviceState>('GetDeviceState'),
   profiles: () => invoke<Profile[]>('GetProfiles'),
   updateDPI: (sector: number, x: number, y: number) => invoke<void>('UpdateDPI', sector, x, y),
+  updateDPIStage: (sector: number, stage: number, x: number, y: number, enabled: boolean, makeDefault: boolean) => invoke<void>('UpdateDPIStage', sector, stage, x, y, enabled, makeDefault),
+  selectDPI: (dpi: number) => invoke<void>('SelectDPI', dpi),
   updateRate: (sector: number, rate: number) => invoke<void>('UpdatePollingRate', sector, rate),
   activate: (sector: number) => invoke<void>('ActivateProfile', sector),
   rename: (sector: number, name: string) => invoke<void>('RenameProfile', sector, name),
