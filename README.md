@@ -101,7 +101,7 @@ thing that actually takes effect (and what G HUB does) is editing the **onboard
 profile** stored on the mouse. So the app:
 
 - speaks HID++ 2.0 directly over `/dev/hidraw` (no `hidapi`/CGO HID dependency);
-- reads/writes the profile sectors (DPI, report rate, buttons, RGB), recomputing
+- reads/writes the profile sectors (DPI, report rate and buttons), recomputing
   the CRC and verifying the write;
 - measures the **true** polling rate by counting HID input reports, because the
   device's rate register reports a stale value.
@@ -121,10 +121,16 @@ The binary doubles as a CLI for diagnostics:
 
 ```
 superstrike -probe        # device info + full HID++ feature table
+superstrike -bhop-probe   # conservative raw reads of BunnyHopping feature 0x80E0
 superstrike -profiles     # list all profiles + control sectors
 superstrike -measurerate  # measure the real report rate (move the mouse)
 superstrike -scan         # list Logitech hidraw nodes + HID++ responses
 ```
+
+`-bhop-probe` is an intentionally limited reverse-engineering aid. It resolves
+feature `0x80E0` and calls only the probable read functions (`fn0` capabilities
+and `fn2` current configuration), twice each. It never calls `fn1`, the probable
+setter. Copy the complete terminal output when reporting results.
 
 ## Status & compatibility
 

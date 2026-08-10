@@ -20,6 +20,13 @@ function friendlyDeviceName(value: string) {
   return friendlyName(value, 'Superstrike')
 }
 
+function editableProfileName(profile: Profile | undefined) {
+  if (!profile) return ''
+  if (!profile.name) return profile.index === 1 ? 'Default' : `Profile ${profile.index}`
+  if (/^PROFILE_NAME_/i.test(profile.name)) return friendlyName(profile.name, `Profile ${profile.index}`)
+  return profile.name
+}
+
 function Icon({name}: {name: Page | 'refresh' | 'check' | 'edit' | 'battery' | 'signal'}) {
   const paths: Record<string, ReactElement> = {
     dashboard: <><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></>,
@@ -52,7 +59,22 @@ function MouseSideArt({interactive=false,selected,onSelect}: {interactive?:boole
 }
 
 function EmptyState({state}: {state: DeviceState}) {
-  return <div className="empty-state glass"><div className="empty-orbit"><span /></div><h2>{state.permissionDenied ? 'Permission required' : 'Waiting for your Superstrike'}</h2><p>{state.permissionDenied ? 'The mouse is connected, but Linux has not granted access. Install the included udev rule, then reconnect the mouse.' : 'Power on or reconnect your mouse. This screen will update automatically when it becomes available.'}</p><div className="pulse-label"><i /> Scanning for device</div></div>
+  const denied=state.permissionDenied
+  return <div className={`device-wait-screen ${denied?'permission':''}`}>
+    <section className="wait-copy-panel">
+      <span className="settings-kicker">DEVICE CONNECTION</span>
+      <h1>{denied?'Access required':'Connect your Superstrike'}</h1>
+      <p>{denied?'The mouse is visible to Linux, but Superstrike Control cannot open it yet. Install the included device-access rule, then reconnect the mouse.':'Power on the mouse and connect it by cable or LIGHTSPEED receiver. The app will open your settings automatically when the device responds.'}</p>
+      <div className={`wait-status ${denied?'blocked':''}`}><i/><div><strong>{denied?'Device found · access blocked':'Searching for PRO X2 Superstrike'}</strong><small>{denied?'Reconnect after granting access':'Automatic detection is running'}</small></div></div>
+      <div className="wait-checklist">
+        <div><b>01</b><span><strong>Power on the mouse</strong><small>Use wired or LIGHTSPEED mode</small></span></div>
+        <div><b>02</b><span><strong>Connect to this computer</strong><small>Direct USB connections work too</small></span></div>
+        <div><b>03</b><span><strong>Keep this window open</strong><small>No refresh or restart is required</small></span></div>
+      </div>
+    </section>
+    <section className="wait-product-panel"><span>DEVICE PREVIEW</span><MouseArt/><div><strong>PRO X2 Superstrike</strong><small>HID++ 4.2 gaming mouse</small></div></section>
+    <footer className="wait-footer"><span className={`strip-dot ${denied?'warning':''}`}/><strong>{denied?'Permission setup required':'Waiting for device'}</strong><small>{denied?'Run the included installer if the access rule is missing.':'This page updates as soon as the mouse is available.'}</small></footer>
+  </div>
 }
 
 function Metric({label, value, suffix, detail, icon}: {label: string; value: string | number; suffix?: string; detail: string; icon: 'profiles'|'signal'|'battery'}) {
@@ -100,8 +122,8 @@ function DPIPage({notify}: {notify: (s: string, e?: boolean) => void}) {
   const load = useCallback(async()=>{setBusy(true);try{const list=await api.profiles();const active=list.find(profile=>profile.active)||list[0];setActiveProfile(active);setDrafts(active?.dpiStages||[]);if(active)setSelected(active.currentDpiStage>=0?active.currentDpiStage:active.defaultDpiStage)}catch(error){notify(String(error),true)}finally{setBusy(false)}},[notify])
   useEffect(()=>{load()},[load])
   const edit=(index:number,value:number)=>setDrafts(current=>current.map(stage=>stage.index===index?{...stage,x:value,y:value}:stage))
-  const save=async(stage:DPIStage,enabled=stage.enabled,makeDefault=false)=>{if(!activeProfile||saving!==undefined)return;setSaving(stage.index);try{await api.updateDPIStage(activeProfile.sector,stage.index,Math.max(100,Math.min(44000,stage.x)),Math.max(100,Math.min(44000,stage.y)),enabled,makeDefault);notify(makeDefault?`DPI slot ${stage.index+1} activated`:`DPI slot ${stage.index+1} saved to the mouse`);await load()}catch(error){notify(String(error),true)}finally{setSaving(undefined)}}
-  const selectStage=async(stage:DPIStage)=>{if(saving!==undefined||!stage.enabled)return;setSaving(stage.index);setSelected(stage.index);try{await api.selectDPI(stage.x);notify(`DPI slot ${stage.index+1} selected`);await load()}catch(error){notify(String(error),true)}finally{setSaving(undefined)}}
+  const save=async(stage:DPIStage,enabled=stage.enabled,makeDefault=false)=>{if(!activeProfile||saving!==undefined)return;setSaving(stage.index);try{await api.updateDPIStage(activeProfile.sector,stage.index,Math.max(100,Math.min(44000,stage.x)),Math.max(100,Math.min(44000,stage.y)),enabled,makeDefault);notify(makeDefault?`DPI slot ${stage.index+1} set as default`:`DPI slot ${stage.index+1} saved to the mouse`);await load()}catch(error){notify(String(error),true)}finally{setSaving(undefined)}}
+  const selectStage=async(stage:DPIStage)=>{if(!activeProfile||saving!==undefined||!stage.enabled)return;setSaving(stage.index);setSelected(stage.index);try{await api.selectDPI(activeProfile.sector,stage.x);notify(`DPI slot ${stage.index+1} selected`);await load()}catch(error){notify(String(error),true)}finally{setSaving(undefined)}}
   if(busy&&!activeProfile)return <Loader text="Reading active profile"/>
   if(!activeProfile)return <EmptyState state={{connected:false,permissionDenied:false} as DeviceState}/>
   if(!activeProfile.hasDpiStages)return <div className="dpi-unsupported"><h1>DPI stages unavailable</h1><p>This onboard profile uses an older layout that does not safely expose five independent stages.</p></div>
@@ -109,7 +131,7 @@ function DPIPage({notify}: {notify: (s: string, e?: boolean) => void}) {
   return <div className="dpi-hub-page page-enter">
     <main className="dpi-work-panel">
       <header className="dpi-title"><div><h1>DPI</h1><p>Five sensitivity slots stored directly on the mouse.</p></div><div className="dpi-title-actions"><span>{drafts.filter(stage=>stage.enabled).length} / 5 enabled</span></div></header>
-      <div className="dpi-stage-head"><span>Slot</span><span>DPI</span><span>Enabled</span></div>
+      <div className="dpi-stage-head"><span>Slot</span><span>DPI</span><span>Enabled</span><span>Default</span></div>
       <div className="dpi-stage-list">{drafts.map(stage=><div key={stage.index} className={`dpi-stage-row onboard ${selected===stage.index?'selected':''} ${!stage.enabled?'disabled':''}`} onClick={()=>setSelected(stage.index)}>
         <button className={`dpi-active-radio ${activeProfile.currentDpiStage===stage.index?'active':''}`} title="Select this DPI now" disabled={!stage.enabled||saving!==undefined} onClick={event=>{event.stopPropagation();selectStage(stage)}} />
         <span className="dpi-stage-index" style={{borderColor:dpiColors[stage.index]}}>{stage.index+1}</span>
@@ -117,6 +139,7 @@ function DPIPage({notify}: {notify: (s: string, e?: boolean) => void}) {
         <input className="dpi-stage-number" type="number" min="100" max="44000" step="50" disabled={!stage.enabled||saving!==undefined} value={stage.x} onChange={event=>edit(stage.index,+event.target.value)} onBlur={()=>save(stage)} onKeyDown={event=>{if(event.key==='Enter')save(stage)}}/>
         <span className="dpi-unit">DPI</span>
         <button className={`switch dpi-stage-switch ${stage.enabled?'on':''}`} disabled={saving!==undefined} onClick={event=>{event.stopPropagation();save(stage,!stage.enabled,false)}}><i/></button>
+        <button className={`dpi-default-button ${activeProfile.defaultDpiStage===stage.index?'active':''}`} disabled={!stage.enabled||saving!==undefined||activeProfile.defaultDpiStage===stage.index} onClick={event=>{event.stopPropagation();save(stage,true,true)}}>{activeProfile.defaultDpiStage===stage.index?'Default':'Set default'}</button>
         <button className="dpi-row-save" disabled={!stage.enabled||saving!==undefined} onClick={event=>{event.stopPropagation();save(stage)}}>{saving===stage.index?'Saving…':'Save'}</button>
       </div>)}</div>
       <p className="dpi-save-note">The filled circle marks the DPI currently reported by the mouse. Assign Next DPI, Previous DPI, or Cycle DPI to a mouse button to move through enabled slots.</p>
@@ -130,7 +153,8 @@ function ProfilesPage({notify}: {notify: (s: string, e?: boolean) => void}) {
   const load = useCallback(async()=>{setBusy(true);try{const list=await api.profiles();setProfiles(list);setSelected(current=>list[current]?current:Math.max(0,list.findIndex(profile=>profile.active)))}catch(error){notify(String(error),true)}finally{setBusy(false)}},[notify])
   useEffect(()=>{load()},[load])
   const profile=profiles[selected]
-  useEffect(()=>{setName(profile?.name||'')},[profile?.sector,profile?.name])
+  const shownName=editableProfileName(profile)
+  useEffect(()=>{setName(editableProfileName(profile))},[profile?.sector,profile?.name])
   const action = async(label:string,fn:()=>Promise<unknown>)=>{try{await fn();notify(label);await load()}catch(error){notify(String(error),true)}}
   if(busy&&!profiles.length)return <Loader text="Reading onboard profiles"/>
   if(!profile)return <EmptyState state={{connected:false,permissionDenied:false} as DeviceState}/>
@@ -146,9 +170,10 @@ function ProfilesPage({notify}: {notify: (s: string, e?: boolean) => void}) {
       <div className="profile-stat-row"><div><span>DPI</span><strong>{profile.dpiX===profile.dpiY?profile.dpiX:`${profile.dpiX} × ${profile.dpiY}`}</strong></div><div><span>Polling rate</span><strong>{profile.pollingRate} Hz</strong></div><div><span>Status</span><strong>{profile.enabled?'Enabled':'Disabled'}</strong></div></div>
     </main>
     <aside className="profile-settings-panel">
-      <section><span className="settings-kicker">PROFILE SETTINGS</span><h2>Name</h2><label>Profile name</label><input value={name} maxLength={32} onChange={event=>setName(event.target.value)}/><button className="button subtle full" disabled={!name.trim()||name===profile.name} onClick={()=>action('Profile renamed',()=>api.rename(profile.sector,name.trim()))}>Save name</button></section>
+      <section><span className="settings-kicker">PROFILE SETTINGS</span><h2>Name</h2><label>Profile name</label><input value={name} maxLength={24} onChange={event=>setName(event.target.value)}/><button className="button subtle full" disabled={!name.trim()||name.trim()===shownName} onClick={()=>action('Profile renamed',()=>api.rename(profile.sector,name.trim()))}>Save name</button></section>
       <section><h2>Onboard state</h2><div className="profile-setting-line"><div><strong>Enabled</strong><small>Available on the mouse</small></div><button className={`switch ${profile.enabled?'on':''}`} onClick={()=>action(profile.enabled?'Profile disabled':'Profile enabled',()=>api.enable(profile.index,!profile.enabled))}><i/></button></div><div className="profile-setting-line"><div><strong>Active profile</strong><small>{profile.active?'In use now':'Not currently active'}</small></div><span className={`profile-state-dot ${profile.active?'on':''}`}/></div>{!profile.active&&<button className="button primary full" disabled={!profile.enabled} onClick={()=>action('Profile activated',()=>api.activate(profile.sector))}>Make active</button>}</section>
-      <section className="profile-color-section"><h2>Profile color</h2><div><i style={{background:`rgb(${profile.red},${profile.green},${profile.blue})`}}/><span>Stored indicator color</span></div></section>
+      <section className="profile-dpi-summary"><h2>Stored DPI slots</h2>{profile.hasDpiStages?<div className="profile-dpi-list">{profile.dpiStages.map(stage=><div key={stage.index} className={!stage.enabled?'disabled':''}><i style={{background:dpiColors[stage.index]}}/><span>Slot {stage.index+1}</span><strong>{stage.x===stage.y?stage.x:`${stage.x} × ${stage.y}`} DPI</strong>{profile.defaultDpiStage===stage.index&&<em>Default</em>}<small>{stage.enabled?'Enabled':'Disabled'}</small></div>)}</div>:<p className="profile-dpi-unavailable">Independent DPI slots aren’t exposed by this profile layout.</p>}</section>
+      <section className="profile-button-summary"><h2>Button mappings</h2><div className="profile-button-list">{profile.buttonMappings.map(button=><div key={button.index}><i>{button.index+1}</i><span>{button.name}</span><strong>{button.assignment}</strong></div>)}</div></section>
     </aside>
   </div>
 }
@@ -213,7 +238,7 @@ function Slider({title,description,min,max,value,onChange,onCommit}: {title:stri
 function Loader({text}: {text:string}) { return <div className="loader"><i/><span>{text}</span></div> }
 
 export default function App() {
-  const [page,setPage] = useState<Page>('dashboard'), [state,setState] = useState<DeviceState>({connected:false,permissionDenied:false,name:'',path:'',battery:0,charging:false,hasBattery:false,profile:'',dpiX:0,dpiY:0,pollingRate:0,configuredPollingRate:0,profileRed:0,profileGreen:0,profileBlue:0}), [toasts,setToasts] = useState<Toast[]>([])
+  const [page,setPage] = useState<Page>('dashboard'), [state,setState] = useState<DeviceState>({connected:false,permissionDenied:false,name:'',path:'',battery:0,charging:false,hasBattery:false,profile:'',dpiX:0,dpiY:0,pollingRate:0,configuredPollingRate:0}), [toasts,setToasts] = useState<Toast[]>([])
   const notify = useCallback((text:string,error=false) => { const id=Date.now(); setToasts(t=>[...t,{id,text,error}]); setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),3200) },[])
   useEffect(() => { api.state().then(setState).catch(()=>{}); const off=onDeviceUpdate(setState); return () => off?.() },[])
   const nav = useMemo(() => [{id:'dashboard' as Page,label:'Home'},{id:'dpi' as Page,label:'DPI'},{id:'profiles' as Page,label:'Profiles'},{id:'buttons' as Page,label:'Button Mapping'},{id:'haptics' as Page,label:'Haptics'}],[])
@@ -229,7 +254,7 @@ export default function App() {
       <main className="content">{view}</main>
       <footer className="device-strip">
         <div className="strip-tile"><Icon name="signal"/><strong>{state.configuredPollingRate ? `${state.configuredPollingRate} Hz` : '—'}</strong></div>
-        <div className="strip-tile"><i className="profile-color" style={{background:`rgb(${state.profileRed},${state.profileGreen},${state.profileBlue})`}}/><strong>{state.connected ? dpi : '—'}</strong><span>DPI</span></div>
+        <div className="strip-tile"><strong>{state.connected ? dpi : '—'}</strong><span>DPI</span></div>
         <div className="battery-strip"><Icon name="battery"/><i><b style={{width: `${state.hasBattery ? state.battery : 0}%`}}/></i><strong>{state.hasBattery ? `${state.battery}%` : '—'}</strong></div>
         <div className="strip-state"><span className={`strip-dot ${state.connected ? 'online' : ''}`}/>{state.connected ? 'Device ready' : 'Searching'}</div>
         <div className="strip-profile"><span>Profile</span><strong>{friendlyName(state.profile, '—')}</strong></div>

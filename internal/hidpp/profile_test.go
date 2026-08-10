@@ -103,3 +103,20 @@ func TestValidProfileSectorIncludesROM(t *testing.T) {
 		}
 	}
 }
+
+func TestPatchProfileNameRoundTrips(t *testing.T) {
+	raw := make([]byte, 255)
+	if err := patchProfileName(raw, "Gaming Profile 🎮"); err != nil {
+		t.Fatal(err)
+	}
+	if got := decodeProfileName(raw); got != "Gaming Profile 🎮" {
+		t.Fatalf("decoded name %q, want %q", got, "Gaming Profile 🎮")
+	}
+}
+
+func TestPatchProfileNameRejectsMoreThan24Characters(t *testing.T) {
+	raw := make([]byte, 255)
+	if err := patchProfileName(raw, "1234567890123456789012345"); err == nil {
+		t.Fatal("expected an overlong profile name to be rejected")
+	}
+}

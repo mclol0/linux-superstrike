@@ -19,6 +19,7 @@ const (
 	FeatAngleSnap      = 0x2230
 	FeatReportRate     = 0x8060
 	FeatExtReportRate  = 0x8061
+	FeatBunnyHopping   = 0x80E0
 	FeatRGBEffects     = 0x8070
 	FeatRGBEffectsAlt  = 0x8071
 	FeatPerKeyLighting = 0x8081

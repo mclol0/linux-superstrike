@@ -22,6 +22,7 @@ import (
 
 func main() {
 	probe := flag.Bool("probe", false, "headless: print device info + HID++ feature table")
+	bhopProbe := flag.Bool("bhop-probe", false, "headless: conservatively probe BunnyHopping feature 0x80E0 (read-only candidates)")
 	profile := flag.Bool("profile", false, "headless: dump the active onboard profile (read-only)")
 	profiles := flag.Bool("profiles", false, "headless: list all profiles + control sectors (read-only)")
 	measurerate := flag.Bool("measurerate", false, "measure the ACTUAL report rate from kernel input events (move the mouse)")
@@ -31,6 +32,8 @@ func main() {
 	switch {
 	case *probe:
 		runProbe()
+	case *bhopProbe:
+		runBHopProbe()
 	case *profile:
 		runProfile()
 	case *profiles:
@@ -42,6 +45,70 @@ func main() {
 	default:
 		runDesktop()
 	}
+}
+
+// runBHopProbe resolves the undocumented BunnyHopping feature and calls only
+// the two functions that follow Logitech's usual read-side convention:
+// fn0=get capabilities and fn2=get current configuration. In particular, it
+// deliberately never calls fn1, which is conventionally the setter.
+//
+// Both reads are repeated. Stable replies are easier to distinguish from
+// counters or asynchronous state, and the raw bytes can be compared with a
+// USB capture from G HUB without baking an unverified layout into the driver.
+func runBHopProbe() {
+	d := openMouse()
+	defer d.Close()
+
+	ver, pingErr := d.Ping()
+	marketingName, _ := d.DeviceName()
+	f, err := d.FeatureIndex(hidpp.FeatBunnyHopping)
+
+	fmt.Println("Superstrike Bunny Hopping diagnostic (conservative mode)")
+	fmt.Printf("device: path=%s index=0x%02X hid-name=%q\n", d.Path, d.Index, d.Name)
+	if pingErr == nil {
+		fmt.Printf("HID++: %s\n", ver)
+	}
+	if marketingName != "" {
+		fmt.Printf("marketing-name: %q\n", marketingName)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve feature 0x%04X: %v\n", hidpp.FeatBunnyHopping, err)
+		os.Exit(1)
+	}
+	if f.Index == 0 {
+		fmt.Printf("feature 0x%04X (BunnyHopping): not exposed by this connection/firmware\n", hidpp.FeatBunnyHopping)
+		return
+	}
+
+	fmt.Printf("feature: id=0x%04X index=0x%02X obsolete=%v hidden=%v engineering=%v\n",
+		f.ID, f.Index, f.Obsolete, f.Hidden, f.Engineering)
+	fmt.Println("calls: fn0 and fn2 only; fn1 (probable setter) is intentionally skipped")
+
+	for _, fn := range []byte{0x00, 0x02} {
+		for attempt := 1; attempt <= 2; attempt++ {
+			response, callErr := d.Call(f.Index, fn)
+			if callErr != nil {
+				fmt.Printf("fn%d attempt%d: error: %v\n", fn, attempt, callErr)
+				continue
+			}
+			printBHopResponse(fn, attempt, response)
+		}
+	}
+
+	fmt.Println("done: no probable setter functions were called")
+}
+
+func printBHopResponse(fn byte, attempt int, response []byte) {
+	fmt.Printf("fn%d attempt%d: len=%d raw=% X", fn, attempt, len(response), response)
+	if len(response) >= 2 {
+		fmt.Printf("  first-u16(be)=%d first-u16(le)=%d",
+			uint16(response[0])<<8|uint16(response[1]),
+			uint16(response[1])<<8|uint16(response[0]))
+	}
+	if len(response) >= 3 {
+		fmt.Printf("  bytes[0..2]=%d,%d,%d", response[0], response[1], response[2])
+	}
+	fmt.Println()
 }
 
 func openMouse() *hidpp.Device {
@@ -136,7 +203,6 @@ func runProfile() {
 	fmt.Printf("active profile sector 0x%04X  name=%q\n", p.Sector, p.Name)
 	fmt.Printf("  polling rate : %d Hz\n", p.ReportRateHz)
 	fmt.Printf("  DPI (X,Y)    : %d, %d\n", p.DPIX, p.DPIY)
-	fmt.Printf("  RGB          : %d,%d,%d\n", p.Red, p.Green, p.Blue)
 	for i := 0; i < info.Buttons && i < 16; i++ {
 		fmt.Printf("  button %d     : %s\n", i+1, p.Buttons[i].Describe())
 	}

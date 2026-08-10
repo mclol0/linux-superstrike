@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 // MaxDPI is a practical upper bound for this sensor; values above it in a
@@ -90,9 +91,6 @@ type Profile struct {
 	DPI          [5]int // raw resolution words (diagnostic)
 	DPIStages    [5]DPIStage
 	HasDPIStages bool
-	Red          byte
-	Green        byte
-	Blue         byte
 	Buttons      [16]ButtonAction // decoded button slots (bytes 32..95)
 }
 
@@ -163,7 +161,6 @@ func decodeProfile(sector int, raw []byte) Profile {
 			p.DPI[i] = int(raw[3+i*2]) | int(raw[4+i*2])<<8
 		}
 		p.DPIX, p.DPIY = p.DPI[dpiXSlot], p.DPI[dpiYSlot]
-		p.Red, p.Green, p.Blue = raw[13], raw[14], raw[15]
 	}
 	for i := 0; i < 16; i++ {
 		off := profileButtonsOffset + i*4
@@ -256,15 +253,15 @@ func decodeProfileName(raw []byte) string {
 	if len(raw) < 208 {
 		return ""
 	}
-	var sb strings.Builder
+	units := make([]uint16, 0, 24)
 	for i := 160; i+1 < 208; i += 2 {
 		c := uint16(raw[i]) | uint16(raw[i+1])<<8
 		if c == 0x0000 || c == 0xFFFF {
 			break
 		}
-		sb.WriteRune(rune(c))
+		units = append(units, c)
 	}
-	return strings.TrimSpace(sb.String())
+	return strings.TrimSpace(string(utf16.Decode(units)))
 }
 
 // ProfileInfo reads the onboard-profile memory model (sector size etc.).
@@ -693,23 +690,27 @@ func (d *Device) SetProfileEnabled(index int, enabled bool) error {
 // 160..207 of the sector, zero-padded, then re-CRCs and writes.
 func (d *Device) SetProfileName(sector int, name string) error {
 	return d.patchProfileSector(sector, func(raw []byte) error {
-		if len(raw) < 208 {
-			return fmt.Errorf("sector too small for name field")
-		}
-		region := raw[160:208] // 48 bytes = 24 UTF-16LE code units
-		for i := range region {
-			region[i] = 0x00
-		}
-		runes := []rune(name)
-		for i, r := range runes {
-			if i >= 24 {
-				break
-			}
-			region[i*2] = byte(r)
-			region[i*2+1] = byte(r >> 8)
-		}
-		return nil
+		return patchProfileName(raw, name)
 	})
+}
+
+func patchProfileName(raw []byte, name string) error {
+	if len(raw) < 208 {
+		return fmt.Errorf("sector too small for name field")
+	}
+	units := utf16.Encode([]rune(name))
+	if len(units) > 24 {
+		return fmt.Errorf("profile name must be 24 characters or fewer")
+	}
+	region := raw[160:208] // 48 bytes = 24 UTF-16LE code units
+	for i := range region {
+		region[i] = 0x00
+	}
+	for i, unit := range units {
+		region[i*2] = byte(unit)
+		region[i*2+1] = byte(unit >> 8)
+	}
+	return nil
 }
 
 // SetProfileReportRate writes the raw report-rate byte of a profile sector.

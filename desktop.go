@@ -36,6 +36,10 @@ type DesktopController struct {
 	name   string
 	perm   bool
 	rate   int
+	// activeProfileSector remembers the onboard profile that owns the current
+	// configuration while the mouse is temporarily in host mode for live DPI.
+	// In host mode the firmware reports CurrentProfileSector as 0x0000.
+	activeProfileSector int
 }
 
 type DeviceState struct {
@@ -51,27 +55,28 @@ type DeviceState struct {
 	DPIY                  int    `json:"dpiY"`
 	PollingRate           int    `json:"pollingRate"`
 	ConfiguredPollingRate int    `json:"configuredPollingRate"`
-	ProfileRed            byte   `json:"profileRed"`
-	ProfileGreen          byte   `json:"profileGreen"`
-	ProfileBlue           byte   `json:"profileBlue"`
 }
 
 type ProfileDTO struct {
-	Index           int           `json:"index"`
-	Sector          int           `json:"sector"`
-	Enabled         bool          `json:"enabled"`
-	Active          bool          `json:"active"`
-	Name            string        `json:"name"`
-	DPIX            int           `json:"dpiX"`
-	DPIY            int           `json:"dpiY"`
-	Rate            int           `json:"pollingRate"`
-	Red             byte          `json:"red"`
-	Green           byte          `json:"green"`
-	Blue            byte          `json:"blue"`
-	DPIStages       []DPIStageDTO `json:"dpiStages"`
-	DefaultDPIStage int           `json:"defaultDpiStage"`
-	CurrentDPIStage int           `json:"currentDpiStage"`
-	HasDPIStages    bool          `json:"hasDpiStages"`
+	Index           int                `json:"index"`
+	Sector          int                `json:"sector"`
+	Enabled         bool               `json:"enabled"`
+	Active          bool               `json:"active"`
+	Name            string             `json:"name"`
+	DPIX            int                `json:"dpiX"`
+	DPIY            int                `json:"dpiY"`
+	Rate            int                `json:"pollingRate"`
+	DPIStages       []DPIStageDTO      `json:"dpiStages"`
+	DefaultDPIStage int                `json:"defaultDpiStage"`
+	CurrentDPIStage int                `json:"currentDpiStage"`
+	HasDPIStages    bool               `json:"hasDpiStages"`
+	ButtonMappings  []ProfileButtonDTO `json:"buttonMappings"`
+}
+
+type ProfileButtonDTO struct {
+	Index      int    `json:"index"`
+	Name       string `json:"name"`
+	Assignment string `json:"assignment"`
 }
 
 type DPIStageDTO struct {
@@ -197,6 +202,9 @@ func (c *DesktopController) connectLocked() {
 	c.dev = pick
 	c.perm = false
 	_ = pick.SetOnboardMode(hidpp.OnboardModeOnboard)
+	if sector, err := pick.CurrentProfileSector(); err == nil && sector != 0 {
+		c.activeProfileSector = sector
+	}
 	if n, err := pick.DeviceName(); err == nil && n != "" {
 		c.name = n
 	} else {
@@ -212,6 +220,7 @@ func (c *DesktopController) ensureDeviceLocked() error {
 		c.dev.Close()
 		c.dev = nil
 		c.rate = 0
+		c.activeProfileSector = 0
 	}
 	c.connectLocked()
 	if c.dev == nil {
@@ -233,10 +242,9 @@ func (c *DesktopController) GetDeviceState() DeviceState {
 	if b, err := c.dev.Battery(); err == nil {
 		s.Battery, s.Charging, s.HasBattery = b.Percent, b.Charging, b.Available
 	}
-	if p, err := c.dev.ActiveProfile(); err == nil {
+	if p, err := c.activeProfileLocked(); err == nil {
 		s.Profile, s.DPIX, s.DPIY = p.Name, p.DPIX, p.DPIY
 		s.ConfiguredPollingRate = p.ReportRateHz
-		s.ProfileRed, s.ProfileGreen, s.ProfileBlue = p.Red, p.Green, p.Blue
 		if s.Profile == "" {
 			s.Profile = fmt.Sprintf("Profile %d", p.Index)
 		}
@@ -260,27 +268,15 @@ func (c *DesktopController) GetProfiles() ([]ProfileDTO, error) {
 	if err != nil && len(profiles) == 0 {
 		return nil, err
 	}
-	active, _ := c.dev.CurrentProfileSector()
+	reported, _ := c.dev.CurrentProfileSector()
 	liveDPI, _ := c.dev.CurrentDPI()
-	activeFound := false
-	for _, p := range profiles {
-		if p.Sector == active {
-			activeFound = true
-			break
-		}
+	active := resolveActiveProfileSector(reported, c.activeProfileSector, profiles)
+	if active != 0 {
+		c.activeProfileSector = active
 	}
-	if !activeFound && len(profiles) > 0 {
-		// In host-control mode the device reports sector 0x0000 even though the
-		// previously loaded profile still owns the stored slots and mappings.
-		// There is normally one profile on a pristine Superstrike; otherwise use
-		// the first enabled slot as the association for the live DPI register.
-		active = profiles[0].Sector
-		for _, p := range profiles {
-			if p.Enabled {
-				active = p.Sector
-				break
-			}
-		}
+	buttonCount := 5
+	if info, infoErr := c.dev.ProfileInfo(); infoErr == nil && info.Buttons > 0 && info.Buttons <= 16 {
+		buttonCount = info.Buttons
 	}
 	out := make([]ProfileDTO, 0, len(profiles))
 	for _, p := range profiles {
@@ -299,7 +295,11 @@ func (c *DesktopController) GetProfiles() ([]ProfileDTO, error) {
 				}
 			}
 		}
-		out = append(out, ProfileDTO{Index: p.Index, Sector: p.Sector, Enabled: p.Enabled, Active: p.Sector == active, Name: p.Name, DPIX: p.DPIX, DPIY: p.DPIY, Rate: p.ReportRateHz, Red: p.Red, Green: p.Green, Blue: p.Blue, DPIStages: stages, DefaultDPIStage: p.ResIndex, CurrentDPIStage: currentStage, HasDPIStages: p.HasDPIStages})
+		mappings := make([]ProfileButtonDTO, 0, buttonCount)
+		for i := 0; i < buttonCount; i++ {
+			mappings = append(mappings, ProfileButtonDTO{Index: i, Name: physicalButtonLabel(i), Assignment: p.Buttons[i].Describe()})
+		}
+		out = append(out, ProfileDTO{Index: p.Index, Sector: p.Sector, Enabled: p.Enabled, Active: p.Sector == active, Name: p.Name, DPIX: p.DPIX, DPIY: p.DPIY, Rate: p.ReportRateHz, DPIStages: stages, DefaultDPIStage: p.ResIndex, CurrentDPIStage: currentStage, HasDPIStages: p.HasDPIStages, ButtonMappings: mappings})
 	}
 	return out, nil
 }
@@ -313,11 +313,20 @@ func (c *DesktopController) UpdateDPIStage(sector, stage, x, y int, enabled, mak
 	})
 }
 
-func (c *DesktopController) SelectDPI(dpi int) error {
+func (c *DesktopController) SelectDPI(sector, dpi int) error {
 	if dpi < 100 || dpi > hidpp.MaxDPI {
 		return fmt.Errorf("DPI must be between 100 and %d", hidpp.MaxDPI)
 	}
-	return c.withDevice(func(d *hidpp.Device) error { return d.SelectLiveDPI(dpi) })
+	if sector <= 0 {
+		return fmt.Errorf("invalid active profile sector 0x%04X", sector)
+	}
+	return c.withDevice(func(d *hidpp.Device) error {
+		if err := d.SelectLiveDPI(dpi); err != nil {
+			return err
+		}
+		c.activeProfileSector = sector
+		return nil
+	})
 }
 
 func (c *DesktopController) UpdateDPI(sector, x, y int) error {
@@ -332,7 +341,13 @@ func (c *DesktopController) UpdatePollingRate(sector, hz int) error {
 }
 
 func (c *DesktopController) ActivateProfile(sector int) error {
-	return c.withDevice(func(d *hidpp.Device) error { return d.SetCurrentProfileSector(sector) })
+	return c.withDevice(func(d *hidpp.Device) error {
+		if err := d.SetCurrentProfileSector(sector); err != nil {
+			return err
+		}
+		c.activeProfileSector = sector
+		return nil
+	})
 }
 
 func (c *DesktopController) RenameProfile(sector int, name string) error {
@@ -354,7 +369,7 @@ func (c *DesktopController) GetButtons() (ButtonsPayload, error) {
 		return ButtonsPayload{}, err
 	}
 	info, _ := c.dev.ProfileInfo()
-	p, err := c.dev.ActiveProfile()
+	p, err := c.activeProfileLocked()
 	if err != nil {
 		return ButtonsPayload{}, err
 	}
@@ -371,6 +386,50 @@ func (c *DesktopController) GetButtons() (ButtonsPayload, error) {
 		out.Buttons = append(out.Buttons, ButtonDTO{i, physicalButtonLabel(i), p.Buttons[i].Describe(), p.Buttons[i]})
 	}
 	return out, nil
+}
+
+// activeProfileLocked returns the profile associated with the current live
+// settings. The caller must hold opMu. Host-control mode reports sector zero,
+// so use the last known onboard sector before falling back to device defaults.
+func (c *DesktopController) activeProfileLocked() (hidpp.Profile, error) {
+	profiles, err := c.dev.Profiles()
+	if err == nil && len(profiles) > 0 {
+		reported, _ := c.dev.CurrentProfileSector()
+		sector := resolveActiveProfileSector(reported, c.activeProfileSector, profiles)
+		for _, profile := range profiles {
+			if profile.Sector == sector {
+				c.activeProfileSector = sector
+				return profile, nil
+			}
+		}
+	}
+	p, fallbackErr := c.dev.ActiveProfile()
+	if fallbackErr == nil {
+		c.activeProfileSector = p.Sector
+	}
+	return p, fallbackErr
+}
+
+func resolveActiveProfileSector(reported, remembered int, profiles []hidpp.Profile) int {
+	for _, profile := range profiles {
+		if profile.Sector == reported {
+			return reported
+		}
+	}
+	for _, profile := range profiles {
+		if profile.Sector == remembered {
+			return remembered
+		}
+	}
+	for _, profile := range profiles {
+		if profile.Enabled {
+			return profile.Sector
+		}
+	}
+	if len(profiles) > 0 {
+		return profiles[0].Sector
+	}
+	return 0
 }
 
 func (c *DesktopController) GetButtonChoices() ButtonChoicesDTO {

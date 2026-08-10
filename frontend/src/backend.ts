@@ -2,13 +2,13 @@ export type DeviceState = {
   connected: boolean; permissionDenied: boolean; name: string; path: string
   battery: number; charging: boolean; hasBattery: boolean; profile: string
   dpiX: number; dpiY: number; pollingRate: number; configuredPollingRate: number
-  profileRed: number; profileGreen: number; profileBlue: number
 }
 
 export type Profile = {
   index: number; sector: number; enabled: boolean; active: boolean; name: string
-  dpiX: number; dpiY: number; pollingRate: number; red: number; green: number; blue: number
+  dpiX: number; dpiY: number; pollingRate: number
   dpiStages: DPIStage[]; defaultDpiStage: number; currentDpiStage: number; hasDpiStages: boolean
+  buttonMappings: Array<{index: number; name: string; assignment: string}>
 }
 export type DPIStage = { index: number; x: number; y: number; enabled: boolean }
 
@@ -25,7 +25,7 @@ declare global {
   }
 }
 
-const demoState: DeviceState = { connected: false, permissionDenied: false, name: '', path: '', battery: 0, charging: false, hasBattery: false, profile: '', dpiX: 0, dpiY: 0, pollingRate: 0, configuredPollingRate: 0, profileRed: 0, profileGreen: 0, profileBlue: 0 }
+const demoState: DeviceState = { connected: false, permissionDenied: false, name: '', path: '', battery: 0, charging: false, hasBattery: false, profile: '', dpiX: 0, dpiY: 0, pollingRate: 0, configuredPollingRate: 0 }
 
 async function invoke<T>(method: string, ...args: unknown[]): Promise<T> {
   const fn = window.go?.main?.DesktopController?.[method]
@@ -41,7 +41,7 @@ export const api = {
   profiles: () => invoke<Profile[]>('GetProfiles'),
   updateDPI: (sector: number, x: number, y: number) => invoke<void>('UpdateDPI', sector, x, y),
   updateDPIStage: (sector: number, stage: number, x: number, y: number, enabled: boolean, makeDefault: boolean) => invoke<void>('UpdateDPIStage', sector, stage, x, y, enabled, makeDefault),
-  selectDPI: (dpi: number) => invoke<void>('SelectDPI', dpi),
+  selectDPI: (sector: number, dpi: number) => invoke<void>('SelectDPI', sector, dpi),
   updateRate: (sector: number, rate: number) => invoke<void>('UpdatePollingRate', sector, rate),
   activate: (sector: number) => invoke<void>('ActivateProfile', sector),
   rename: (sector: number, name: string) => invoke<void>('RenameProfile', sector, name),

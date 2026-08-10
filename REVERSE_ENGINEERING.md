@@ -99,7 +99,7 @@ Two layouts have now been observed and are detected from their contents.
 | 1 | resolution index |
 | 2 | shift-resolution index |
 | 3 … 12 | 5 DPI words, **uint16 little-endian** |
-| 13,14,15 | red, green, blue |
+| 13,14,15 | unverified/reserved on the Superstrike (no RGB feature exposed) |
 | 16 | power mode |
 | 17 | angle snapping |
 | 18,19 | write count (LE) |
@@ -189,6 +189,18 @@ Wire encoding: each value is packed in bits 7..2 (`wire = logical << 2`). The
 rapid-trigger byte's **bit 0 is a firmware sensitivity flag that must be
 preserved** across writes, or the device returns INVALID_ARGUMENT. These
 **do** apply live (no profile reload needed).
+
+## Scroll-wheel Bhop mode — `0x80E0` BunnyHopping
+
+The device advertises this feature, but its payload layout is not decoded yet.
+G HUB describes it as a scroll-wheel filter: the first wheel event is ignored
+unless a second event occurs within a configurable 100–1000 ms window.
+
+Run `superstrike -bhop-probe` to collect conservative diagnostic output. The
+probe resolves the runtime feature index, calls probable read functions `fn0`
+and `fn2` twice, and prints the raw response bytes. It intentionally does not
+call probable setter `fn1`. Do not add a setter until its payload has been
+verified against device responses or a G HUB USB capture.
 
 ## Buttons (via the profile, offset 48)
 
