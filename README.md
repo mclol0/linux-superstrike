@@ -5,7 +5,7 @@ features that mouse needs (DPI, polling rate, haptics, button remapping,
 profiles), on Linux, in a single self-contained binary. No daemon, no Wine, no
 cloud account.
 
-<img width="1408" height="1156" alt="image" src="https://github.com/user-attachments/assets/e46e654b-2cf5-4313-8e67-e05007876688" />
+<img width="1724" height="1160" alt="image" src="https://github.com/user-attachments/assets/ae2648af-0719-43a1-8424-073712ad1c3c" />
 
 > 🤖 **Fully vibe-coded** — this entire app (protocol reverse-engineering and
 > all) was built collaboratively with an AI coding assistant. See
