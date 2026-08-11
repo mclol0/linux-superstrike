@@ -2,6 +2,9 @@ import { type ReactElement, useCallback, useEffect, useMemo, useState } from 're
 import { api, ButtonPayload, Choices, DeviceState, DPIStage, Haptics, onDeviceUpdate, Profile } from './backend'
 import productImage from './productImage'
 import productSideImage from './productSideImage'
+import { primaryButtonPaths } from './mouseButtonPaths'
+import { sideButtonPaths } from './sideButtonPaths'
+import { wheelButtonPath } from './wheelButtonPath'
 
 type Page = 'dashboard' | 'dpi' | 'profiles' | 'buttons' | 'haptics'
 type Toast = { id: number; text: string; error?: boolean }
@@ -46,11 +49,36 @@ function Icon({name}: {name: Page | 'refresh' | 'check' | 'edit' | 'battery' | '
   return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>
 }
 
-function MouseArt({interactive = false, selected, onSelect, visibleMarkers=[0,1,2]}: {interactive?: boolean; selected?: number; onSelect?: (i: number) => void; visibleMarkers?:number[]}) {
+function ActuationOverlay({values,max,haptics,maxHaptics,selected,onSelect}: {values:number[];max:number;haptics:number[];maxHaptics:number;selected?:number;onSelect?:(index:number)=>void}) {
+  const top=283, bottom=999, height=bottom-top
+  const labels=[{name:'Left button',anchor:[1040,650],label:[410,570],edge:[830,665]},{name:'Right button',anchor:[1460,650],label:[1670,570],edge:[1670,665]}]
+  return <svg className={`mouse-actuation-overlay ${onSelect?'interactive':''}`} viewBox="848 279 806 1601" role="group" aria-label="Haptic mouse buttons">
+    <defs><linearGradient id="actuation-fill" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stopColor="#108cff" stopOpacity=".72"/><stop offset="1" stopColor="#55c8ff" stopOpacity=".34"/></linearGradient>{primaryButtonPaths.map((path,index)=><clipPath id={`primary-button-clip-${index}`} key={index}><path d={path}/></clipPath>)}</defs>
+    {primaryButtonPaths.map((path,index)=>{const value=Math.max(1,Math.min(max,values[index]||1)),ratio=max<=1?1:1-(value-1)/(max-1),strength=Math.max(0,Math.min(1,(haptics[index]||0)/Math.max(1,maxHaptics))),y=bottom-height*ratio,opacity=Math.min(.92,.14+strength*.62+(selected===index?.14:0)),label=labels[index],centerX=label.label[0]+210;return <g key={index} role="button" tabIndex={0} aria-label={`Configure ${label.name}`} className={`haptic-vector-group ${selected===index?'selected':''}`} onClick={()=>onSelect?.(index)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect?.(index)}}}><path className="actuation-button-outline" d={path} style={{filter:`drop-shadow(0 0 ${2+strength*8}px rgba(16,140,255,${.08+strength*.4}))`}}/><rect className="actuation-button-fill" x={index===0?848:1250} y={y} width="406" height={height*ratio} opacity={opacity} clipPath={`url(#primary-button-clip-${index})`}/><line className="actuation-point-line" x1={index===0?848:1250} x2={index===0?1250:1656} y1={y} y2={y} clipPath={`url(#primary-button-clip-${index})`}/><path className="actuation-button-hit" d={path}/><g className="haptic-control-callout"><line x1={label.anchor[0]} y1={label.anchor[1]} x2={label.edge[0]} y2={label.edge[1]}/><circle cx={label.anchor[0]} cy={label.anchor[1]} r="12"/><rect x={label.label[0]} y={label.label[1]} width="420" height="180"/><text className="title" textAnchor="middle" x={centerX} y={label.label[1]+58}>{label.name}</text><text className="detail" textAnchor="middle" x={centerX} y={label.label[1]+108}>ACTUATION <tspan>{value} / {max}</tspan></text><text className="detail" textAnchor="middle" x={centerX} y={label.label[1]+151}>HAPTICS <tspan>{haptics[index]===0?'OFF':`${haptics[index]} / ${maxHaptics}`}</tspan></text></g></g>})}
+  </svg>
+}
+
+function TopControlOverlay({selected,onSelect,assignments=[]}: {selected?:number;onSelect?:(index:number)=>void;assignments?:string[]}) {
+  const controls=[
+    {index:0,name:'Left button',path:primaryButtonPaths[0],anchor:[1040,650],label:[400,570],edge:[820,660],width:420},
+    {index:1,name:'Right button',path:primaryButtonPaths[1],anchor:[1460,650],label:[1680,570],edge:[1680,660],width:420},
+    {index:2,name:'Middle button',path:wheelButtonPath.path,transform:wheelButtonPath.transform,anchor:[1250,650],label:[990,1040],edge:[1250,1040],width:520},
+  ]
+  return <svg className="top-control-overlay" viewBox="848 279 806 1601" role="group" aria-label="Mouse buttons">
+    {controls.map(control=><g key={control.index} role="button" tabIndex={0} aria-label={`Select ${control.name}`} className={`control-vector-group ${selected===control.index?'selected':''}`} onClick={()=>onSelect?.(control.index)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect?.(control.index)}}}>
+      <path d={control.path} transform={control.transform} className={`top-control-vector ${control.index===2?'wheel':''}`}/>
+      <g className="control-callout mapping"><line x1={control.anchor[0]} y1={control.anchor[1]} x2={control.edge[0]} y2={control.edge[1]}/><circle cx={control.anchor[0]} cy={control.anchor[1]} r="12"/><rect x={control.label[0]} y={control.label[1]} width={control.width} height="180"/><text className="title" textAnchor="middle" x={control.label[0]+control.width/2} y={control.label[1]+58}>{control.name}</text><text className="kicker" textAnchor="middle" x={control.label[0]+control.width/2} y={control.label[1]+105}>CURRENT MAPPING</text><text className="assignment" textAnchor="middle" x={control.label[0]+control.width/2} y={control.label[1]+150} textLength={(assignments[control.index]||'Unassigned').length>20?control.width-52:undefined} lengthAdjust="spacingAndGlyphs">{assignments[control.index]||'Unassigned'}</text></g>
+    </g>)}
+  </svg>
+}
+
+function MouseArt({interactive = false, selected, onSelect, visibleMarkers=[0,1,2], actuation, mappingControls=false, mappingAssignments=[]}: {interactive?: boolean; selected?: number; onSelect?: (i: number) => void; visibleMarkers?:number[];actuation?:{values:number[];max:number;haptics:number[];maxHaptics:number};mappingControls?:boolean;mappingAssignments?:string[]}) {
   const marker = (index: number, x: number, y: number) => <g onClick={() => onSelect?.(index)} className={`mouse-marker ${selected === index ? 'selected' : ''}`}><circle cx={x} cy={y} r="30"/><text x={x} y={y + 2}>{index + 1}</text></g>
   return <div className={`mouse-art ${interactive ? 'interactive' : ''}`} role="img" aria-label="PRO X2 Superstrike mouse">
     <img src={productImage} alt="" draggable="false"/>
-    {interactive && <svg className="mouse-hitareas" viewBox="0 0 806 1601" aria-hidden="true">
+    {actuation&&<ActuationOverlay values={actuation.values} max={actuation.max} haptics={actuation.haptics} maxHaptics={actuation.maxHaptics} selected={selected} onSelect={onSelect}/>}
+    {mappingControls&&<TopControlOverlay selected={selected} onSelect={onSelect} assignments={mappingAssignments}/>}
+    {interactive && !mappingControls && visibleMarkers.length>0 && <svg className="mouse-hitareas" viewBox="0 0 806 1601" aria-hidden="true">
       {visibleMarkers.includes(0)&&marker(0, 285, 300)}
       {visibleMarkers.includes(1)&&marker(1, 520, 300)}
       {visibleMarkers.includes(2)&&marker(2, 403, 335)}
@@ -58,9 +86,12 @@ function MouseArt({interactive = false, selected, onSelect, visibleMarkers=[0,1,
   </div>
 }
 
-function MouseSideArt({interactive=false,selected,onSelect}: {interactive?:boolean;selected?:number;onSelect?:(index:number)=>void}) {
-  const marker=(index:number,x:number,y=150)=><g onClick={()=>onSelect?.(index)} className={`side-marker ${selected===index?'selected':''}`}><circle cx={x} cy={y} r="17"/><text x={x} y={y+1}>{index+1}</text></g>
-  return <><img className="mouse-side-art" src={productSideImage} alt="PRO X2 Superstrike side view" draggable="false"/>{interactive&&<svg className="side-hitareas" viewBox="0 0 974 311" aria-hidden="true">{marker(4,380)}{marker(3,522,138)}</svg>}</>
+function MouseSideArt({interactive=false,selected,onSelect,assignments=[]}: {interactive?:boolean;selected?:number;onSelect?:(index:number)=>void;assignments?:string[]}) {
+  const controls=[
+    {index:4,name:'Button 5',...sideButtonPaths[0],anchor:[440,552],label:[150,600],edge:[420,640]},
+    {index:3,name:'Button 4',...sideButtonPaths[1],anchor:[595,535],label:[700,420],edge:[700,463]},
+  ]
+  return <><img className="mouse-side-art" src={productSideImage} alt="PRO X2 Superstrike side view" draggable="false"/>{interactive&&<svg className="side-button-overlay" viewBox="70 399 974 311" role="group" aria-label="Side mouse buttons">{controls.map(control=>{const assignment=assignments[control.index]||'Unassigned',centerX=control.label[0]+135;return <g key={control.index} role="button" tabIndex={0} aria-label={`Select ${control.name}`} className={`control-vector-group ${selected===control.index?'selected':''}`} onClick={()=>onSelect?.(control.index)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();onSelect?.(control.index)}}}><path d={control.path} transform={control.transform} className="side-button-vector"/><g className="control-callout compact mapping"><line x1={control.anchor[0]} y1={control.anchor[1]} x2={control.edge[0]} y2={control.edge[1]}/><circle cx={control.anchor[0]} cy={control.anchor[1]} r="5"/><rect x={control.label[0]} y={control.label[1]} width="270" height="86"/><text className="title" textAnchor="middle" x={centerX} y={control.label[1]+27}>{control.name}</text><text className="kicker" textAnchor="middle" x={centerX} y={control.label[1]+49}>MAPPED TO</text><text className="assignment" textAnchor="middle" x={centerX} y={control.label[1]+72} textLength={assignment.length>18?240:undefined} lengthAdjust="spacingAndGlyphs">{assignment}</text></g></g>})}</svg>}</>
 }
 
 function EmptyState({state}: {state: DeviceState}) {
@@ -118,7 +149,7 @@ function Dashboard({state, notify}: {state: DeviceState; notify: (s: string, e?:
   return <div className="hub-dashboard page-enter">
     <section className="hub-panel product-view"><MouseArt/></section>
     <section className="hub-panel side-view"><MouseSideArt/></section>
-    <section className="hub-panel rate-overview"><div><h2>Stored polling rate</h2><p>Select the USB report frequency for the active onboard profile.</p><InlineStatus state={operation} idle="Stored in the active profile"/></div><div className={`rate-track ${savingRate ? 'saving' : ''}`}>{rates.slice().reverse().map(rate=><button key={rate} className={selectedRate===rate?'active':''} onClick={()=>chooseRate(rate)} disabled={savingRate}>{rate >= 1000 ? `${rate/1000}K` : rate}<small>Hz</small></button>)}</div></section>
+    <section className="hub-panel rate-overview"><div><h2>Stored polling rate</h2><p>Select the USB report frequency for the active onboard profile.</p><InlineStatus state={operation} idle="Stored in the active profile"/></div><div className={`rate-track ${savingRate ? 'saving' : ''}`}>{rates.slice().reverse().map(rate=><button key={rate} className={selectedRate===rate?'active':''} onClick={()=>chooseRate(rate)} disabled={savingRate}>{rate}<small>Hz</small></button>)}</div></section>
   </div>
 }
 
@@ -139,7 +170,7 @@ function DPIPage({notify}: {notify: (s: string, e?: boolean) => void}) {
   return <div className="dpi-hub-page page-enter">
     <main className="dpi-work-panel">
       <header className="dpi-title"><div><h1>DPI</h1><p>Five sensitivity slots stored directly on the mouse.</p></div><div className="dpi-title-actions"><div className="dpi-state-legend"><span><i className="live"/>Current</span><span><i className="stored"/>Profile default</span></div><strong>{drafts.filter(stage=>stage.enabled).length} / 5 enabled</strong></div></header>
-      <section className="dpi-context-bar"><div><span>Active onboard profile</span><strong>{friendlyName(activeProfile.name,`Profile ${activeProfile.index}`)}</strong></div><div><span>Live DPI slot</span><strong>Slot {(activeProfile.currentDpiStage>=0?activeProfile.currentDpiStage:activeProfile.defaultDpiStage)+1}</strong></div><div><span>Selected value</span><strong>{selectedStage?.x||'—'} DPI</strong></div></section>
+      <section className="dpi-context-bar"><div><span>Active onboard profile</span><strong>{friendlyName(activeProfile.name,`Profile ${activeProfile.index}`)}</strong></div><div><span>Current DPI slot</span><strong>Slot {(activeProfile.currentDpiStage>=0?activeProfile.currentDpiStage:activeProfile.defaultDpiStage)+1}</strong></div><div><span>Selected value</span><strong>{selectedStage?.x||'—'} DPI</strong></div></section>
       <div className="dpi-stage-head"><span>Slot</span><span>DPI</span><span>Enabled</span><span>Default</span></div>
       <div className="dpi-stage-list">{drafts.map(stage=><div key={stage.index} className={`dpi-stage-row onboard ${selected===stage.index?'selected':''} ${!stage.enabled?'disabled':''}`} onClick={()=>setSelected(stage.index)}>
         <button className={`dpi-active-radio ${activeProfile.currentDpiStage===stage.index?'active':''}`} title="Select this DPI now" disabled={!stage.enabled||saving!==undefined} onClick={event=>{event.stopPropagation();selectStage(stage)}} />
@@ -198,12 +229,11 @@ function Buttons({notify}: {notify: (s: string, e?: boolean) => void}) {
   const save=async()=>{setSaving(true);setOperation({text:'Writing assignment…',tone:'saving'});try{await api.setButton(data.sector,item.index,kind,code,mods);setOperation({text:`${item.name} stored in this profile`,tone:'saved'});notify(`${item.name} remapped`);await load()}catch(error){setOperation({text:'Button assignment failed',tone:'error'});notify(String(error),true)}finally{setSaving(false)}}
   return <div className="button-mapper page-enter">
     <section className="button-visual-panel">
-      <div className="button-top-view"><MouseArt interactive selected={selected} onSelect={index=>{if(data.buttons[index])setSelected(index)}}/></div>
-      <div className="button-side-view"><MouseSideArt interactive selected={selected} onSelect={index=>setSelected(index)}/><div className="side-selection"><span>{selected+1}</span><strong>{item.name}</strong></div></div>
-      <nav className="physical-button-list">{data.buttons.map((button,index)=><button key={button.index} className={selected===index?'selected':''} title={button.name} onClick={()=>setSelected(index)}><i>{index+1}</i><span>{button.name}</span></button>)}</nav>
+      <div className="button-top-view"><MouseArt interactive mappingControls mappingAssignments={data.buttons.map(button=>button.description)} selected={selected} onSelect={index=>{if(data.buttons[index])setSelected(index)}}/></div>
+      <div className="button-side-view"><MouseSideArt interactive assignments={data.buttons.map(button=>button.description)} selected={selected} onSelect={index=>setSelected(index)}/></div>
     </section>
     <aside className="mapping-editor-panel">
-      <header><div><span>SELECTED CONTROL</span><h1>{item.name}</h1><p>{item.description}</p></div><i className="mapping-index">{selected+1}</i></header>
+      <header><div><span>SELECTED CONTROL</span><h1>{item.name}</h1><p>{item.description}</p></div></header>
       <div className="mapping-category-tabs">{categories.map(category=><button key={category.kind} className={kind===category.kind?'selected':''} onClick={()=>{setKind(category.kind);const list=category.kind===1?choices.mouse:category.kind===2?choices.keys:category.kind===3?choices.media:category.kind===4?choices.functions:[];setCode(list[0]?.code||0)}}>{category.name}</button>)}</div>
       <section className="mapping-options"><span>{kind===0?'BUTTON STATE':`${categories.find(category=>category.kind===kind)?.name.toUpperCase()} ASSIGNMENTS`}</span>{kind===0?<button className="mapping-option selected"><strong>Disabled</strong><small>The selected control will do nothing</small></button>:options.map(option=><button key={option.code} className={`mapping-option ${code===option.code?'selected':''}`} onClick={()=>setCode(option.code)}><strong>{option.name}</strong>{code===option.code&&<Icon name="check"/>}</button>)}</section>
       <section className={`mapping-modifiers ${kind===2?'visible':''}`}><span>MODIFIERS</span><div>{[['Ctrl',1],['Shift',2],['Alt',4],['Super',8]].map(([name,bit])=><button key={String(name)} className={(mods&Number(bit))?'selected':''} disabled={kind!==2} onClick={()=>setMods(mods^Number(bit))}>{name}</button>)}</div></section>
@@ -222,23 +252,18 @@ function AssignmentModal({item,choices,onClose,onSave}: {item: ButtonPayload['bu
 
 function HapticsPage({notify}: {notify: (s: string, e?: boolean) => void}) {
   const [data,setData] = useState<Haptics>(), [selected,setSelected] = useState(0)
-  const [operation,setOperation] = useState<OperationState>()
   const load = useCallback(async () => { try { setData(await api.haptics()) } catch(e) { notify(String(e), true) } }, [notify]); useEffect(() => { load() }, [load])
   const change = (field: 'haptics'|'actuation'|'rapidTrigger', value: number) => setData(d => d ? {...d,buttons:d.buttons.map((b,i)=>i===selected?{...b,[field]:value}:b)} : d)
-  const save = async (field: string, value: number) => { setOperation({text:'Applying switch setting…',tone:'saving'});try { await api.setHaptic(selected,field,value);setOperation({text:'Applied live and stored on the mouse',tone:'saved'});notify('Haptic setting saved') } catch(e) { setOperation({text:'Switch setting failed',tone:'error'});notify(String(e),true);load() } }
+  const save = async (field: string, value: number) => { try { await api.setHaptic(selected,field,value);notify('Haptic setting saved') } catch(e) { notify(String(e),true);load() } }
   const button = data?.buttons[selected]
   if (!data || !button) return <Loader text="Reading analog switch settings"/>
   return <div className="haptics-mapper page-enter">
     <section className="haptics-device-panel">
-      <header><span>ANALOG SWITCH ENGINE</span><h1>Haptic response</h1><p>Select a primary button to tune its physical response.</p></header>
-      <div className="haptics-mouse"><MouseArt interactive selected={selected} visibleMarkers={[0,1]} onSelect={index=>setSelected(index)}/></div>
-      <nav className="haptic-button-picker">{data.buttons.map((item,index)=><button key={item.index} className={selected===index?'selected':''} onClick={()=>setSelected(index)}><i>{index+1}</i><span><strong>{item.name.replace(' Button','')}</strong><small>{item.haptics===0?'Haptics off':`Haptics ${item.haptics}/${data.maxHaptics}`}</small></span></button>)}</nav>
-      <div className="haptic-live-readout"><div><span>SELECTED CONTROL</span><strong>{button.name}</strong></div><div><span>CLICK INTENSITY</span><strong>{button.haptics===0?'OFF':`${button.haptics} / ${data.maxHaptics}`}</strong></div></div>
+      <div className="haptics-mouse"><MouseArt interactive selected={selected} visibleMarkers={[]} actuation={{values:data.buttons.map(item=>item.actuation),max:data.maxActuation,haptics:data.buttons.map(item=>item.haptics),maxHaptics:data.maxHaptics}} onSelect={index=>setSelected(index)}/></div>
     </section>
     <aside className="haptics-settings-panel">
-      <header><div><span>BUTTON SETTINGS</span><h2>{button.name}</h2><p>Changes apply directly to the switch controller.</p></div><i>{selected+1}</i></header>
+      <header><div><span>BUTTON SETTINGS</span><h2>{button.name}</h2><p>Changes apply directly to the switch controller.</p></div></header>
       <div className="haptic-settings-list"><Slider title="Click haptics" description="Strength of the physical click response" min={0} max={data.maxHaptics} value={button.haptics} onChange={v=>change('haptics',v)} onCommit={v=>save('haptics',v)}/><Slider title="Actuation point" description="How far the switch travels before activating" min={1} max={data.maxActuation} value={button.actuation} onChange={v=>change('actuation',v)} onCommit={v=>save('actuation',v)}/><Slider title="Rapid trigger" description="Reset sensitivity for repeated presses" min={1} max={data.maxRapidTrigger} value={button.rapidTrigger} onChange={v=>change('rapidTrigger',v)} onCommit={v=>save('rapidTrigger',v)}/></div>
-      <footer><Icon name="haptics"/><div><strong>Global switch control</strong><span>These settings are not profile-specific.</span><InlineStatus state={operation} idle="Changes apply immediately and remain on the mouse"/></div></footer>
     </aside>
   </div>
 }
@@ -262,11 +287,11 @@ export default function App() {
       </header>
       <main className="content">{view}</main>
       <footer className="device-strip">
-        <div className="strip-tile"><Icon name="signal"/><span>Stored rate</span><strong>{state.configuredPollingRate ? `${state.configuredPollingRate} Hz` : '—'}</strong></div>
-        <div className="strip-tile"><span>Live DPI</span><strong>{state.connected ? dpi : '—'}</strong></div>
+        <div className="strip-tile"><Icon name="signal"/><span>Polling rate</span><strong>{state.configuredPollingRate ? `${state.configuredPollingRate} Hz` : '—'}</strong></div>
+        <div className="strip-tile"><span>DPI</span><strong>{state.connected ? dpi : '—'}</strong></div>
         <div className="battery-strip"><Icon name="battery"/><i><b style={{width: `${state.hasBattery ? state.battery : 0}%`}}/></i><strong>{state.hasBattery ? `${state.battery}%` : '—'}</strong></div>
-        <div className="strip-state"><span className={`strip-dot ${state.connected ? 'online' : ''}`}/>{state.connected ? 'Device ready' : 'Searching'}</div>
-        <div className="strip-profile"><span>Onboard profile</span><strong>{friendlyName(state.profile, '—')}</strong></div>
+        <div className="strip-state"><span className={`strip-dot ${state.connected ? 'online' : ''}`}/>{state.connected ? 'Device connected' : 'Searching'}</div>
+        <div className="strip-profile"><span>Current profile</span><strong>{friendlyName(state.profile, '—')}</strong></div>
       </footer>
     </section>
     <div className="toast-stack">{toasts.map(t=><div key={t.id} className={`toast ${t.error?'error':''}`}><span>{t.error?'!':'✓'}</span>{t.text}</div>)}</div>

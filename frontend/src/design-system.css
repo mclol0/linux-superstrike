@@ -39,6 +39,7 @@
 .rate-overview { grid-template-columns: 270px 1fr; }
 .rate-overview .inline-status { margin-top: 9px; }
 .rate-track.saving { opacity: .62; }
+.rate-track button small { display: inline; margin: 0 0 0 4px; vertical-align: baseline; }
 
 .dpi-title-actions { align-items: flex-end; flex-direction: column; gap: 8px; }
 .dpi-title-actions > strong { color: var(--hub-muted); font-size: 10px; font-weight: 500; }
@@ -109,8 +110,86 @@
 .mapping-editor-panel > footer .inline-status { margin-top: 7px; }
 .mapping-editor-panel > header p, .mapping-option small, .mapping-editor-panel > footer span { color: var(--hub-muted); }
 .mapping-category-tabs button, .mapping-options > span, .mapping-modifiers > span { font-size: 10px; }
+.button-top-view .top-control-overlay {
+  position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible;
+  transform: scale(.82); pointer-events: auto;
+}
+.top-control-vector {
+  fill: rgba(16,140,255,.065); stroke: rgba(255,255,255,.42); stroke-width: 4;
+  cursor: pointer; transition: fill .14s ease, stroke .14s ease, filter .14s ease;
+}
+.control-vector-group:hover .top-control-vector, .control-vector-group:focus-visible .top-control-vector {
+  fill: rgba(16,140,255,.2); stroke: rgba(142,211,255,.82);
+  filter: drop-shadow(0 0 7px rgba(16,140,255,.3));
+}
+.control-vector-group.selected .top-control-vector {
+  fill: rgba(16,140,255,.52); stroke: #d9f2ff;
+  filter: drop-shadow(0 0 9px rgba(16,140,255,.48));
+}
+.top-control-vector.wheel { stroke-width: 5; }
+.control-vector-group { cursor: pointer; outline: none; }
+.control-callout { pointer-events: all; }
+.control-callout line { stroke: rgba(170,178,188,.72); stroke-width: 3; }
+.control-callout circle { fill: var(--hub-blue); stroke: #d9f2ff; stroke-width: 3; }
+.control-callout rect { fill: rgba(24,24,26,.96); stroke: rgba(255,255,255,.24); stroke-width: 2; }
+.control-callout text { fill: rgba(250,253,255,.94); font: 550 46px Inter,sans-serif; pointer-events: none; }
+.control-callout text tspan:last-child { fill: rgba(250,253,255,.5); font-size: 22px; font-weight: 650; letter-spacing: 2px; }
+.control-callout.mapping .title { fill: #fafdff; font: 600 56px Inter,sans-serif; }
+.control-callout.mapping .kicker { fill: rgba(250,253,255,.58); font: 700 24px Inter,sans-serif; letter-spacing: 1.8px; }
+.control-callout.mapping .assignment { fill: #8dcdff; font: 650 30px Inter,sans-serif; }
+.control-vector-group:hover .control-callout line, .control-vector-group:focus-visible .control-callout line, .control-vector-group.selected .control-callout line { stroke: #65baff; }
+.control-vector-group:hover .control-callout rect, .control-vector-group:focus-visible .control-callout rect, .control-vector-group.selected .control-callout rect { stroke: #65baff; fill: rgba(26,40,54,.97); }
+.control-vector-group.selected .control-callout circle { fill: #65baff; filter: drop-shadow(0 0 6px rgba(16,140,255,.8)); }
+.button-side-view .side-button-overlay {
+  position: absolute; inset: 7% 8%; width: 84%; height: 86%; overflow: visible;
+  transform: scale(.94); pointer-events: auto;
+}
+.side-button-vector {
+  fill: rgba(16,140,255,.07); stroke: rgba(255,255,255,.46); stroke-width: 2;
+  cursor: pointer; transition: fill .14s ease, stroke .14s ease, filter .14s ease;
+}
+.control-vector-group:hover .side-button-vector, .control-vector-group:focus-visible .side-button-vector {
+  fill: rgba(16,140,255,.25); stroke: rgba(142,211,255,.9);
+  filter: drop-shadow(0 0 5px rgba(16,140,255,.34));
+}
+.control-vector-group.selected .side-button-vector {
+  fill: rgba(16,140,255,.58); stroke: #d9f2ff;
+  filter: drop-shadow(0 0 7px rgba(16,140,255,.5));
+}
+.control-callout.compact line { stroke-width: 1.5; }
+.control-callout.compact circle { stroke-width: 1.5; }
+.control-callout.compact rect { stroke-width: 1; }
+.control-callout.compact text { font-size: 20px; }
+.control-callout.compact text tspan:last-child { font-size: 11px; letter-spacing: .9px; }
+.control-callout.compact.mapping .title { font-size: 24px; }
+.control-callout.compact.mapping .kicker { font-size: 11px; letter-spacing: .8px; }
+.control-callout.compact.mapping .assignment { font-size: 17px; }
 
-.haptics-settings-panel { grid-template-rows: 108px minmax(0,1fr) auto; }
+.haptics-settings-panel { grid-template-rows: 108px minmax(0,1fr); }
+.haptics-device-panel .haptics-mouse { inset: 4% 20% 6%; }
+.mouse-actuation-overlay { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; transform: scale(.88); }
+.haptics-mouse .mouse-actuation-overlay { transform: scale(.82); }
+.mouse-actuation-overlay.interactive { pointer-events: auto; }
+.haptic-vector-group { cursor: pointer; outline: none; }
+.actuation-button-outline { fill: rgba(16,140,255,.035); stroke: rgba(85,200,255,.22); stroke-width: 4; }
+.actuation-button-fill { fill: url(#actuation-fill); pointer-events: none; }
+.actuation-point-line { stroke: rgba(190,235,255,.65); stroke-width: 5; }
+.actuation-button-outline, .actuation-point-line { pointer-events: none; }
+.actuation-button-hit { fill: transparent; cursor: pointer; pointer-events: all; }
+.mouse-actuation-overlay g.selected .actuation-button-outline { fill: rgba(16,140,255,.08); stroke: rgba(85,200,255,.82); }
+.mouse-actuation-overlay g.selected .actuation-point-line { stroke: #d7f3ff; stroke-width: 7; }
+.haptic-vector-group:hover .actuation-button-outline, .haptic-vector-group:focus-visible .actuation-button-outline { fill: rgba(16,140,255,.12); stroke: rgba(85,200,255,.9); }
+.haptic-control-callout { pointer-events: all; }
+.haptic-control-callout > line { stroke: rgba(170,178,188,.72); stroke-width: 3; }
+.haptic-control-callout > circle { fill: var(--hub-blue); stroke: #d9f2ff; stroke-width: 3; }
+.haptic-control-callout > rect { fill: rgba(24,24,26,.97); stroke: rgba(255,255,255,.25); stroke-width: 2; }
+.haptic-control-callout text { pointer-events: none; }
+.haptic-control-callout .title { fill: #fafdff; font: 600 56px Inter,sans-serif; }
+.haptic-control-callout .detail { fill: rgba(250,253,255,.62); font: 700 28px Inter,sans-serif; letter-spacing: 1.4px; }
+.haptic-control-callout .detail tspan { fill: #8dcdff; font-size: 30px; letter-spacing: 0; }
+.haptic-vector-group:hover .haptic-control-callout > line, .haptic-vector-group:focus-visible .haptic-control-callout > line, .haptic-vector-group.selected .haptic-control-callout > line { stroke: #65baff; }
+.haptic-vector-group:hover .haptic-control-callout > rect, .haptic-vector-group:focus-visible .haptic-control-callout > rect, .haptic-vector-group.selected .haptic-control-callout > rect { fill: rgba(26,40,54,.97); stroke: #65baff; }
+.haptic-vector-group.selected .haptic-control-callout > circle { fill: #65baff; filter: drop-shadow(0 0 6px rgba(16,140,255,.8)); }
 .haptics-settings-panel > footer { min-height: 76px; }
 .haptics-settings-panel > footer .inline-status { margin-top: 6px; }
 .haptic-setting-row > div:first-child small, .haptics-settings-panel > header p { color: var(--hub-muted); font-size: 10px; }
