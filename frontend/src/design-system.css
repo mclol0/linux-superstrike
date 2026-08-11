@@ -49,17 +49,10 @@
 .dpi-title-actions .dpi-state-legend span { display: flex; align-items: center; gap: 6px; width: auto; height: auto; padding: 0; border: 0; color: var(--hub-muted); background: none; font-size: 9px; }
 .dpi-state-legend i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--hub-fg-35); }
 .dpi-state-legend i.live { border: 2px solid #fff; background: #fff; }
-.dpi-state-legend i.stored { border-radius: 1px; border-color: var(--hub-blue); background: rgba(16,140,255,.25); }
 .dpi-hub-page { display: block; }
 .dpi-work-panel { width: 100%; height: 100%; padding: 30px clamp(30px,4.5vw,76px); }
-.dpi-context-bar { display: grid; grid-template-columns: 1.4fr 1fr 1fr; margin: -5px 0 28px; border: 1px solid var(--hub-fg-5); background: #202022; }
-.dpi-context-bar > div { min-width: 0; padding: 13px 16px; border-right: 1px solid var(--hub-fg-5); }
-.dpi-context-bar > div:last-child { border-right: 0; }
-.dpi-context-bar span, .dpi-context-bar strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dpi-context-bar span { color: var(--hub-muted); font-size: 9px; }
-.dpi-context-bar strong { margin-top: 6px; font-size: 12px; font-weight: 550; }
-.dpi-stage-row.onboard { grid-template-columns: 22px 46px minmax(260px,1fr) 86px 30px 66px 92px; }
-.dpi-stage-head { grid-template-columns: 90px 1fr 112px 170px; }
+.dpi-stage-row.onboard { grid-template-columns: 22px 46px minmax(260px,1fr) 86px 30px 66px; }
+.dpi-stage-head { grid-template-columns: 90px 1fr 112px; }
 .dpi-save-note { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .dpi-save-note > p { max-width: 680px; margin: 0; line-height: 1.5; }
 .dpi-save-note .inline-status { flex: none; margin: 0; }
@@ -224,7 +217,6 @@
 .haptic-setting-row,
 .dpi-stage-row,
 .profile-detail-card,
-.dpi-context-bar,
 .mapping-editor-panel,
 .haptics-settings-panel {
   transition:
@@ -480,8 +472,7 @@
 
 @media (max-width: 1120px) {
   .dpi-work-panel { padding-inline: 26px; }
-  .dpi-stage-row.onboard { grid-template-columns: 20px 40px minmax(180px,1fr) 76px 28px 58px 82px; }
-  .dpi-context-bar { grid-template-columns: 1.2fr 1fr 1fr; }
+  .dpi-stage-row.onboard { grid-template-columns: 20px 40px minmax(180px,1fr) 76px 28px 58px; }
   .profile-data-grid { grid-template-columns: 1fr; }
 }
 

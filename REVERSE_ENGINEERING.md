@@ -138,15 +138,20 @@ the requested stage, writes a valid CCITT CRC, creates a minimal RAM control
 table pointing at the new enabled profile, and selects that RAM sector.
 Subsequent edits use the normal read/patch/CRC/write path.
 
-Selecting a stage from the desktop app is separate from editing these bytes.
 The mouse's current stage is volatile state and is not exposed by the profile
-sector. To select a DPI immediately, the app enters host mode and writes the
-live value through Extended Adjustable DPI (`0x2202`). Onboard control is
-restored when the app exits; the five stored stages are not changed.
+sector. The desktop app therefore treats selection as a change to the stored
+default: it updates byte 1, reloads the profile and writes the selected value
+through Extended Adjustable DPI (`0x2202`) so the change is both immediate and
+persistent. On connection the app also applies the stored default explicitly;
+some firmware reports the correct resolution index while leaving the sensor at
+its previous volatile value when onboard mode is re-entered. For the same
+reason, normal desktop shutdown closes the HID handle without forcing the
+device out of host mode; changing modes during shutdown would replace the
+selected DPI with that stale stage.
 
-Live selection must not use the profile-edit path: rewriting a sector and
-reloading it is slow and briefly loads the factory DPI. The DPI-page circle
-therefore calls only `0x2202`; the row's Save control handles persistence.
+Editing any stage also reloads the profile sector. The UI records the live
+stage before that write and reapplies it afterward, since the reload may select
+a different stage even when the edited stage was already active.
 
 ### Report-rate byte encoding (the surprising one)
 

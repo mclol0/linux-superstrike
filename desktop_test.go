@@ -34,3 +34,20 @@ func TestNormalizeDeviceNameFixesFirmwareTypo(t *testing.T) {
 		}
 	}
 }
+
+func TestStoredDefaultDPIReturnsEnabledResolutionIndex(t *testing.T) {
+	profile := hidpp.Profile{HasDPIStages: true, ResIndex: 1}
+	profile.DPIStages[0] = hidpp.DPIStage{Index: 0, X: 800, Y: 800, Enabled: true}
+	profile.DPIStages[1] = hidpp.DPIStage{Index: 1, X: 1600, Y: 1600, Enabled: true}
+	if got, ok := storedDefaultDPI(profile); !ok || got != 1600 {
+		t.Fatalf("storedDefaultDPI() = %d, %v; want 1600, true", got, ok)
+	}
+}
+
+func TestStoredDefaultDPIRejectsDisabledStage(t *testing.T) {
+	profile := hidpp.Profile{HasDPIStages: true, ResIndex: 2}
+	profile.DPIStages[2] = hidpp.DPIStage{Index: 2, X: 3200, Y: 3200, Enabled: false}
+	if got, ok := storedDefaultDPI(profile); ok {
+		t.Fatalf("storedDefaultDPI() = %d, true; want false", got)
+	}
+}

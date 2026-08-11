@@ -616,8 +616,9 @@ func (d *Device) WriteProfileDPIStage(sector, stage, x, y int, enabled, makeDefa
 
 // activateLiveDPI changes the sensor's current value without replacing the
 // five onboard stages. The extended DPI setter is ignored while an onboard
-// profile owns the sensor, so hand control to the host and keep it there while
-// the desktop app is open. Shutdown restores onboard control.
+// profile owns the sensor, so hand control to the host and keep it there. The
+// desktop app deliberately leaves that device state intact when its HID handle
+// closes because returning to onboard mode selects a stale stage on this model.
 func (d *Device) activateLiveDPI(dpi int) error {
 	lod := byte(0)
 	if info, err := d.DPI(); err == nil {

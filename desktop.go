@@ -165,7 +165,10 @@ func (c *DesktopController) shutdown(context.Context) {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 	if c.dev != nil {
-		_ = c.dev.SetOnboardMode(hidpp.OnboardModeOnboard)
+		// Do not force onboard mode here. This firmware ignores the stored
+		// resolution index when host control is released and jumps to a stale DPI
+		// stage. Host mode is device state, not ownership of this file descriptor,
+		// so closing the handle safely preserves the selected sensor value.
 		c.dev.Close()
 		c.dev = nil
 	}
@@ -205,6 +208,22 @@ func (c *DesktopController) connectLocked() {
 	_ = pick.SetOnboardMode(hidpp.OnboardModeOnboard)
 	if sector, err := pick.CurrentProfileSector(); err == nil && sector != 0 {
 		c.activeProfileSector = sector
+	}
+	// Some Superstrike firmware keeps the previous sensor value when onboard
+	// mode is re-entered instead of loading the profile's resolution index. Read
+	// the stored default and apply it explicitly so startup reflects onboard
+	// memory rather than whichever volatile stage the sensor last reported.
+	if profiles, err := pick.Profiles(); err == nil {
+		active := resolveActiveProfileSector(c.activeProfileSector, c.activeProfileSector, profiles)
+		for _, profile := range profiles {
+			if profile.Sector != active {
+				continue
+			}
+			if dpi, ok := storedDefaultDPI(profile); ok {
+				_ = pick.SelectLiveDPI(dpi)
+			}
+			break
+		}
 	}
 	if n, err := pick.DeviceName(); err == nil && n != "" {
 		c.name = normalizeDeviceName(n)
@@ -469,6 +488,17 @@ func resolveActiveProfileSector(reported, remembered int, profiles []hidpp.Profi
 		return profiles[0].Sector
 	}
 	return 0
+}
+
+func storedDefaultDPI(profile hidpp.Profile) (int, bool) {
+	if !profile.HasDPIStages || profile.ResIndex < 0 || profile.ResIndex >= len(profile.DPIStages) {
+		return 0, false
+	}
+	stage := profile.DPIStages[profile.ResIndex]
+	if !stage.Enabled || stage.X < 100 || stage.X > hidpp.MaxDPI {
+		return 0, false
+	}
+	return stage.X, true
 }
 
 func (c *DesktopController) GetButtonChoices() ButtonChoicesDTO {

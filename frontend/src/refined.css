@@ -416,13 +416,6 @@ nav .icon { width: 17px; height: 17px; }
 }
 .dpi-row-save:hover:not(:disabled) { background: #363639; }
 .dpi-row-save:disabled { opacity: .25; cursor: default; }
-.dpi-default-button {
-  height: 30px; padding: 0 7px; border: 1px solid var(--hub-fg-8); color: var(--hub-fg-60);
-  background: #242426; font-size: 8px; white-space: nowrap; cursor: pointer;
-}
-.dpi-default-button:hover:not(:disabled) { color: #fff; border-color: var(--hub-fg-20); background: #303033; }
-.dpi-default-button.active { color: #8dc5ff; border-color: rgba(16,140,255,.45); background: rgba(16,140,255,.13); opacity: 1; }
-.dpi-default-button:disabled:not(.active) { opacity: .25; cursor: default; }
 .dpi-stage-row:last-child { border-bottom: 0; }
 .dpi-stage-row:hover, .dpi-stage-row.selected { background: #262628; }
 .dpi-stage-row.selected { box-shadow: inset 3px 0 var(--hub-blue); }
@@ -522,11 +515,21 @@ nav .icon { width: 17px; height: 17px; }
 .profile-browser-list > button.active > i { background: var(--hub-blue); box-shadow: none; }
 .profile-browser > footer { padding: 13px 20px; border-top: 1px solid var(--hub-fg-5); color: var(--hub-fg-35); font-size: 10px; }
 .profile-browser .icon-button {
-  width: 32px; height: 32px; border: 1px solid var(--hub-fg-5); border-radius: 0;
+  position: relative; overflow: visible; width: 32px; height: 32px; border: 1px solid var(--hub-fg-5); border-radius: 0;
   color: var(--hub-fg-60); background: #242426; box-shadow: none;
 }
 .profile-browser .icon-button:hover { color: #fff; border-color: var(--hub-fg-12); background: #29292b; }
 .profile-browser .icon-button .icon { width: 14px; height: 14px; }
+.profile-browser .icon-button::after {
+  content: attr(data-tooltip); position: absolute; z-index: 20; top: calc(100% + 9px); right: 0;
+  width: max-content; padding: 7px 9px; border: 1px solid var(--hub-fg-12); border-radius: 2px;
+  color: var(--hub-fg-80); background: #171719; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  font-size: 9px; font-weight: 550; letter-spacing: .04em; white-space: nowrap;
+  opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(-3px);
+  transition: opacity .14s ease, visibility .14s ease, transform .14s ease;
+}
+.profile-browser .icon-button:hover::after,
+.profile-browser .icon-button:focus-visible::after { opacity: 1; visibility: visible; transform: translateY(0); }
 .profile-preview-panel { position: relative; overflow: hidden; }
 .profile-preview-panel > header { position: absolute; z-index: 2; top: 24px; left: 26px; }
 .profile-preview-panel > header > span { color: var(--hub-fg-35); font-size: 9px; letter-spacing: .08em; }
@@ -576,6 +579,7 @@ nav .icon { width: 17px; height: 17px; }
 .profile-dpi-list span { font-size: 9px; }
 .profile-dpi-list strong { color: #fff; font-size: 10px; font-weight: 550; }
 .profile-dpi-list em { padding: 3px 5px; color: #8dc5ff; background: rgba(16,140,255,.13); font-size: 7px; font-style: normal; text-transform: uppercase; letter-spacing: .05em; }
+.profile-dpi-list em.active { color: var(--hub-green); background: rgba(0,204,138,.13); }
 .profile-dpi-list small { grid-column: 5; color: var(--hub-fg-35); font-size: 7px; }
 .profile-dpi-unavailable { margin: 0; color: var(--hub-fg-35); font-size: 9px; line-height: 1.55; }
 .profile-button-summary h2 { margin-bottom: 13px; }
