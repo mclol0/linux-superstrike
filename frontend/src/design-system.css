@@ -2,6 +2,8 @@
 .hub-shell {
   --hub-panel-raised: #242426; --hub-line: rgba(250,253,255,.1);
   --hub-muted: rgba(250,253,255,.48); --hub-danger: #ff6b6b;
+  --motion-fast: 140ms; --motion-base: 220ms;
+  --motion-ease: cubic-bezier(.2,.75,.25,1); --motion-spring: cubic-bezier(.2,1.35,.35,1);
   width: 100%; height: 100%; overflow: hidden;
 }
 .hub-workspace { display: grid; min-width: 0; min-height: 0; overflow: hidden; }
@@ -127,6 +129,13 @@
   filter: drop-shadow(0 0 9px rgba(16,140,255,.48));
 }
 .top-control-vector.wheel { stroke-width: 5; }
+.button-hatch-line { stroke: rgba(198,231,255,.72); stroke-width: 5; }
+.button-hatch-line.compact { stroke-width: 2; }
+.control-vector-hatch { fill: url(#top-control-hatch); opacity: .2; pointer-events: none; transition: opacity var(--motion-fast) ease, filter var(--motion-base) ease; }
+.control-vector-hatch.side { fill: url(#side-control-hatch); opacity: .24; }
+.control-vector-group:hover .control-vector-hatch,
+.control-vector-group:focus-visible .control-vector-hatch { opacity: .52; filter: drop-shadow(0 0 4px rgba(16,140,255,.35)); }
+.control-vector-group.selected .control-vector-hatch { opacity: .8; filter: drop-shadow(0 0 5px rgba(16,140,255,.52)); animation: hub-hatch-selected 1.6s ease-in-out infinite; }
 .control-vector-group { cursor: pointer; outline: none; }
 .control-callout { pointer-events: all; }
 .control-callout line { stroke: rgba(170,178,188,.72); stroke-width: 3; }
@@ -145,11 +154,11 @@
   transform: scale(.94); pointer-events: auto;
 }
 .side-button-vector {
-  fill: rgba(16,140,255,.07); stroke: rgba(255,255,255,.46); stroke-width: 2;
+  fill: rgba(10,14,20,.3); stroke: rgba(255,255,255,.58); stroke-width: 2;
   cursor: pointer; transition: fill .14s ease, stroke .14s ease, filter .14s ease;
 }
 .control-vector-group:hover .side-button-vector, .control-vector-group:focus-visible .side-button-vector {
-  fill: rgba(16,140,255,.25); stroke: rgba(142,211,255,.9);
+  fill: rgba(16,102,176,.4); stroke: rgba(142,211,255,.94);
   filter: drop-shadow(0 0 5px rgba(16,140,255,.34));
 }
 .control-vector-group.selected .side-button-vector {
@@ -173,6 +182,7 @@
 .haptic-vector-group { cursor: pointer; outline: none; }
 .actuation-button-outline { fill: rgba(16,140,255,.035); stroke: rgba(85,200,255,.22); stroke-width: 4; }
 .actuation-button-fill { fill: url(#actuation-fill); pointer-events: none; }
+.actuation-button-hatch { fill: url(#actuation-hatch); pointer-events: none; transition: opacity var(--motion-fast) ease; }
 .actuation-point-line { stroke: rgba(190,235,255,.65); stroke-width: 5; }
 .actuation-button-outline, .actuation-point-line { pointer-events: none; }
 .actuation-button-hit { fill: transparent; cursor: pointer; pointer-events: all; }
@@ -198,6 +208,275 @@
 .device-strip .strip-tile { min-width: 112px; }
 .device-strip span { font-size: 10px; }
 .device-strip strong { color: rgba(250,253,255,.78); font-weight: 500; }
+
+/* Motion is deliberately state-driven: it confirms navigation and input without keeping the UI in motion. */
+.hub-shell .page-enter { animation: hub-page-enter 280ms var(--motion-ease) both; }
+.hub-shell .page-enter > * { animation: hub-panel-enter 320ms var(--motion-ease) both; }
+.hub-shell .page-enter > :nth-child(2) { animation-delay: 35ms; }
+.hub-shell .page-enter > :nth-child(3) { animation-delay: 70ms; }
+
+.hub-workspace button,
+.hub-workspace input,
+.hub-workspace select,
+.feature-tabs button,
+.profile-browser-list > button,
+.mapping-option,
+.haptic-setting-row,
+.dpi-stage-row,
+.profile-detail-card,
+.dpi-context-bar,
+.mapping-editor-panel,
+.haptics-settings-panel {
+  transition:
+    color var(--motion-fast) ease,
+    background-color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-base) var(--motion-ease),
+    opacity var(--motion-fast) ease,
+    filter var(--motion-fast) ease,
+    transform var(--motion-fast) var(--motion-ease);
+}
+
+.hub-workspace button:active:not(:disabled) {
+  transform: translateY(1px) scale(.985);
+  transition-duration: 60ms;
+}
+
+.feature-tabs button:hover:not(.active) { color: rgba(250,253,255,.9); background: rgba(255,255,255,.035); }
+.feature-tabs button.active { animation: hub-tab-select var(--motion-base) var(--motion-ease) both; }
+.profile-browser-list > button:hover:not(.selected),
+.mapping-option:hover { background-color: rgba(255,255,255,.045); box-shadow: inset 2px 0 rgba(101,186,255,.5); }
+.profile-browser-list > button.selected { animation: hub-list-select 260ms var(--motion-ease) both; }
+.mapping-option.selected { animation: hub-list-select 260ms var(--motion-ease) both; }
+
+.hub-workspace .switch,
+.hub-workspace .switch::before,
+.hub-workspace .switch::after,
+.hub-workspace .switch i {
+  transition:
+    background-color var(--motion-base) ease,
+    border-color var(--motion-base) ease,
+    box-shadow var(--motion-base) ease,
+    transform var(--motion-base) var(--motion-spring),
+    left var(--motion-base) var(--motion-spring);
+}
+.hub-workspace .switch.on i { animation: hub-switch-confirm 260ms var(--motion-spring); }
+
+.range { transition: filter var(--motion-fast) ease, opacity var(--motion-fast) ease; }
+.range:hover { filter: brightness(1.18); }
+.range:active { filter: brightness(1.34); }
+.rate-track button.active,
+.dpi-stage-row.live { animation: hub-setting-confirm 300ms var(--motion-ease); }
+
+.inline-status { transition: color var(--motion-base) ease, opacity var(--motion-base) ease; }
+.inline-status > i { transition: background-color var(--motion-base) ease, box-shadow var(--motion-base) ease, transform var(--motion-base) var(--motion-spring); }
+.inline-status.saved > i { animation: hub-status-confirm 420ms var(--motion-spring); }
+.inline-status.error > i { animation: hub-status-error 340ms ease; }
+.profile-live-badge.active > i,
+.strip-dot.online { animation: hub-ready-pulse 2.4s ease-in-out infinite; }
+.battery-strip > i > b { transition: width 450ms var(--motion-ease), background-color var(--motion-base) ease; }
+
+.top-control-vector,
+.side-button-vector,
+.actuation-button-outline,
+.actuation-button-fill,
+.actuation-point-line,
+.control-callout line,
+.control-callout circle,
+.control-callout rect,
+.control-callout text,
+.haptic-control-callout > line,
+.haptic-control-callout > circle,
+.haptic-control-callout > rect,
+.haptic-control-callout text {
+  transition:
+    fill var(--motion-fast) ease,
+    stroke var(--motion-fast) ease,
+    opacity var(--motion-fast) ease,
+    filter var(--motion-base) ease;
+}
+.control-vector-group.selected .control-callout rect,
+.haptic-vector-group.selected .haptic-control-callout > rect { animation: hub-control-select 300ms var(--motion-ease); }
+.control-vector-group:hover .control-callout circle,
+.haptic-vector-group:hover .haptic-control-callout > circle { animation: hub-anchor-hover 700ms ease-in-out infinite alternate; }
+
+/* A more expressive interaction layer for device art and setting changes. */
+.product-view .mouse-art,
+.side-view .mouse-side-art,
+.button-top-view .mouse-art,
+.button-side-view .mouse-side-art,
+.button-side-view .side-button-overlay,
+.haptics-mouse .mouse-art {
+  transition: transform 360ms var(--motion-ease), filter 360ms ease;
+  will-change: transform;
+}
+.page-enter .product-view .mouse-art,
+.page-enter .side-view .mouse-side-art,
+.page-enter .button-top-view .mouse-art,
+.page-enter .button-side-view .mouse-side-art,
+.page-enter .button-side-view .side-button-overlay,
+.page-enter .haptics-mouse .mouse-art { animation: hub-device-enter 520ms var(--motion-ease) both; }
+.product-view:hover .mouse-art { transform: translateY(-4px) scale(1.006); filter: drop-shadow(0 24px 24px rgba(0,0,0,.3)); }
+.side-view:hover .mouse-side-art { transform: translateY(-3px) scale(.95); filter: drop-shadow(0 18px 18px rgba(0,0,0,.25)); }
+.button-top-view:hover .mouse-art,
+.haptics-device-panel:hover .haptics-mouse .mouse-art { transform: translateY(-3px) scale(1.006); filter: drop-shadow(0 18px 20px rgba(0,0,0,.24)); }
+.button-side-view:hover .mouse-side-art,
+.button-side-view:hover .side-button-overlay { transform: translateY(-2px) scale(.95); }
+
+.dpi-stage-row,
+.haptic-setting-row { position: relative; overflow: hidden; }
+.dpi-stage-row::after,
+.haptic-setting-row::after {
+  content: ''; position: absolute; inset: 0 auto 0 0; width: 2px;
+  background: var(--hub-blue); opacity: 0; transform: scaleY(.2);
+  transition: opacity var(--motion-fast) ease, transform var(--motion-base) var(--motion-ease);
+  pointer-events: none;
+}
+.dpi-stage-row:hover::after,
+.dpi-stage-row.selected::after,
+.dpi-stage-row.live::after,
+.haptic-setting-row:hover::after { opacity: 1; transform: scaleY(1); }
+.dpi-stage-row:hover { filter: brightness(1.045); }
+.haptic-setting-row:hover { background-color: rgba(255,255,255,.022); }
+.profile-detail-card:hover { border-color: rgba(250,253,255,.13); background-color: #222224; transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+
+.rate-track button { position: relative; overflow: hidden; }
+.rate-track button:hover:not(.active) { transform: translateY(-2px); }
+.rate-track button.active::after {
+  content: ''; position: absolute; inset: 0; width: 45%;
+  background: linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);
+  transform: translateX(-180%) skewX(-18deg);
+  animation: hub-rate-sheen 520ms var(--motion-ease) 80ms both;
+  pointer-events: none;
+}
+.mapping-category-tabs button.selected,
+.mapping-modifiers button.selected { animation: hub-option-pop 240ms var(--motion-spring); }
+.mapping-option .icon { animation: hub-check-in 260ms var(--motion-spring); }
+.animated-setting-value { animation: hub-value-pop 180ms var(--motion-spring); }
+
+.control-vector-group:hover .control-callout line,
+.haptic-vector-group:hover .haptic-control-callout > line { animation: hub-line-draw 260ms var(--motion-ease); }
+.control-vector-group.selected .top-control-vector,
+.control-vector-group.selected .side-button-vector,
+.haptic-vector-group.selected .actuation-button-outline { animation: hub-vector-selected 1.8s ease-in-out infinite; }
+
+.device-strip .strip-tile:hover,
+.device-strip .strip-profile:hover,
+.device-strip .strip-state:hover { filter: brightness(1.14); }
+.device-strip .strip-tile,
+.device-strip .strip-profile,
+.device-strip .strip-state { transition: filter var(--motion-fast) ease, background-color var(--motion-fast) ease; }
+
+.hub-dashboard .three-product-view { grid-column: 1 / 3; grid-row: 1; position: relative; overflow: hidden; }
+.persistent-home { width: 100%; height: 100%; }
+.persistent-home.hidden { display: none; }
+.three-mouse-viewer { position: absolute; inset: 0; overflow: hidden; background: #1e1e20; }
+.three-mouse-viewer canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; opacity: 0; transition: opacity 500ms var(--motion-ease), filter var(--motion-base) ease; }
+.three-mouse-viewer.ready canvas { opacity: 1; animation: hub-3d-reveal 700ms var(--motion-ease) both; }
+.three-mouse-viewer canvas:active { cursor: grabbing; }
+.three-stage-copy { position: absolute; z-index: 2; top: 22px; left: 24px; pointer-events: none; }
+.three-stage-copy span, .three-stage-copy strong { display: block; }
+.three-stage-copy span { color: var(--hub-muted); font-size: 9px; font-weight: 650; letter-spacing: .12em; }
+.three-stage-copy strong { margin-top: 7px; color: rgba(250,253,255,.7); font-size: 10px; font-weight: 400; }
+.three-stage-status { position: absolute; z-index: 3; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--hub-muted); font-size: 10px; transition: opacity var(--motion-base) ease; }
+.three-stage-status i { width: 8px; height: 8px; border: 1px solid rgba(101,186,255,.34); border-top-color: #65baff; border-radius: 50%; animation: spin .8s linear infinite; }
+.three-stage-status.error { color: #f2a4a4; }
+
+@keyframes hub-page-enter {
+  from { opacity: 0; transform: translateY(5px) scale(.998); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes hub-panel-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes hub-tab-select {
+  from { color: rgba(250,253,255,.62); background-color: rgba(255,255,255,.035); }
+  to { color: #fff; }
+}
+@keyframes hub-list-select {
+  from { box-shadow: inset 0 0 var(--hub-blue); }
+}
+@keyframes hub-switch-confirm {
+  0% { transform: scale(.82); }
+  65% { transform: scale(1.13); }
+  100% { transform: scale(1); }
+}
+@keyframes hub-setting-confirm {
+  0% { box-shadow: inset 0 0 0 rgba(101,186,255,0); }
+  45% { box-shadow: inset 0 0 0 1px rgba(101,186,255,.48); }
+  100% { box-shadow: inset 0 0 0 rgba(101,186,255,0); }
+}
+@keyframes hub-status-confirm {
+  0% { transform: scale(.7); box-shadow: 0 0 0 rgba(11,206,124,0); }
+  55% { transform: scale(1.35); box-shadow: 0 0 0 5px rgba(11,206,124,.12); }
+  100% { transform: scale(1); box-shadow: 0 0 0 rgba(11,206,124,0); }
+}
+@keyframes hub-status-error {
+  0%, 100% { transform: translateX(0); }
+  30% { transform: translateX(-2px); }
+  65% { transform: translateX(2px); }
+}
+@keyframes hub-ready-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(11,206,124,0); }
+  50% { box-shadow: 0 0 0 4px rgba(11,206,124,.1); }
+}
+@keyframes hub-control-select {
+  from { opacity: .62; filter: brightness(1.28); }
+  to { opacity: 1; filter: brightness(1); }
+}
+@keyframes hub-anchor-hover {
+  from { filter: drop-shadow(0 0 2px rgba(16,140,255,.25)); }
+  to { filter: drop-shadow(0 0 7px rgba(16,140,255,.75)); }
+}
+@keyframes hub-device-enter {
+  from { opacity: 0; filter: blur(3px) brightness(.72); }
+  55% { opacity: 1; }
+  to { opacity: 1; filter: blur(0) brightness(1); }
+}
+@keyframes hub-rate-sheen {
+  from { transform: translateX(-180%) skewX(-18deg); }
+  to { transform: translateX(330%) skewX(-18deg); }
+}
+@keyframes hub-option-pop {
+  0% { transform: scale(.97); }
+  70% { transform: scale(1.025); }
+  100% { transform: scale(1); }
+}
+@keyframes hub-check-in {
+  from { opacity: 0; transform: scale(.45) rotate(-18deg); }
+  to { opacity: 1; transform: scale(1) rotate(0); }
+}
+@keyframes hub-value-pop {
+  0% { color: #8dcdff; transform: scale(.86); }
+  75% { color: #fff; transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+@keyframes hub-line-draw {
+  from { opacity: .25; stroke-dasharray: 18 12; stroke-dashoffset: 30; }
+  to { opacity: 1; stroke-dasharray: 18 0; stroke-dashoffset: 0; }
+}
+@keyframes hub-vector-selected {
+  0%, 100% { stroke-opacity: .82; }
+  50% { stroke-opacity: 1; filter: drop-shadow(0 0 10px rgba(16,140,255,.55)); }
+}
+@keyframes hub-hatch-selected {
+  0%, 100% { opacity: .68; }
+  50% { opacity: .9; }
+}
+@keyframes hub-3d-reveal {
+  from { opacity: 0; filter: blur(5px) brightness(.7); transform: scale(.975); }
+  to { opacity: 1; filter: blur(0) brightness(1); transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-shell *, .hub-shell *::before, .hub-shell *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 @media (max-width: 1120px) {
   .dpi-work-panel { padding-inline: 26px; }
