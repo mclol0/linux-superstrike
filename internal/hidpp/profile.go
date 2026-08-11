@@ -11,6 +11,11 @@ import (
 // profile slot mean the DPI stage is disabled.
 const MaxDPI = 44000
 
+// Profile-memory write functions commonly complete without acknowledging the
+// request. A short wait preserves replies from devices that do send them while
+// avoiding the general four-second HID++ timeout for every 16-byte chunk.
+const profileWriteAckTimeout = 100 * time.Millisecond
+
 // Onboard profile editing. On the Superstrike the live DPI/report-rate setters
 // (0x2202 / 0x8061) are no-ops — the device runs entirely from its onboard
 // profile sector. To actually change (and persist) DPI and report rate we read
@@ -536,7 +541,7 @@ func (d *Device) writeSector(idx byte, sector int, data []byte) error {
 	data[n-1] = byte(crc & 0xFF)
 
 	// begin write
-	if _, err := d.Call(idx, 0x06, byte(sector>>8), byte(sector&0xFF), 0x00, 0x00, byte(n>>8), byte(n&0xFF)); err != nil && !isTimeout(err) {
+	if _, err := d.callWithTimeout(profileWriteAckTimeout, idx, 0x06, byte(sector>>8), byte(sector&0xFF), 0x00, 0x00, byte(n>>8), byte(n&0xFF)); err != nil && !isTimeout(err) {
 		return err
 	}
 	// stream 16-byte chunks; the device knows the true length from begin, so a
@@ -546,12 +551,12 @@ func (d *Device) writeSector(idx byte, sector int, data []byte) error {
 		if end > n {
 			end = n
 		}
-		if _, err := d.Call(idx, 0x07, data[off:end]...); err != nil && !isTimeout(err) {
+		if _, err := d.callWithTimeout(profileWriteAckTimeout, idx, 0x07, data[off:end]...); err != nil && !isTimeout(err) {
 			return err
 		}
 	}
 	// commit
-	if _, err := d.Call(idx, 0x08); err != nil && !isTimeout(err) {
+	if _, err := d.callWithTimeout(profileWriteAckTimeout, idx, 0x08); err != nil && !isTimeout(err) {
 		return err
 	}
 
@@ -588,23 +593,25 @@ func (d *Device) WriteProfileResolution(sector, x, y int) error {
 // WriteProfileDPIStage edits one of the five onboard DPI stages. Enabled
 // stages are included when a button assigned to Next/Previous/Cycle DPI is
 // pressed. makeDefault also selects the stage loaded when the profile starts.
-func (d *Device) WriteProfileDPIStage(sector, stage, x, y int, enabled, makeDefault bool) error {
+func (d *Device) WriteProfileDPIStage(sector, stage, x, y int, enabled, makeDefault bool) (int, error) {
 	if x < 100 || x > MaxDPI || y < 100 || y > MaxDPI {
-		return fmt.Errorf("DPI must be 100..%d", MaxDPI)
+		return 0, fmt.Errorf("DPI must be 100..%d", MaxDPI)
 	}
 	actual, err := d.patchProfileSectorResolved(sector, func(raw []byte) error {
 		return patchDPIStage(raw, stage, x, y, enabled, makeDefault)
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := d.ReloadProfile(actual); err != nil {
-		return err
+		return 0, err
 	}
 	if makeDefault {
-		return d.activateLiveDPI(x)
+		if err := d.activateLiveDPI(x); err != nil {
+			return 0, err
+		}
 	}
-	return nil
+	return actual, nil
 }
 
 // activateLiveDPI changes the sensor's current value without replacing the
@@ -688,8 +695,8 @@ func (d *Device) SetProfileEnabled(index int, enabled bool) error {
 
 // SetProfileName writes the profile's name (UTF-16LE, max 24 chars) into bytes
 // 160..207 of the sector, zero-padded, then re-CRCs and writes.
-func (d *Device) SetProfileName(sector int, name string) error {
-	return d.patchProfileSector(sector, func(raw []byte) error {
+func (d *Device) SetProfileName(sector int, name string) (int, error) {
+	return d.patchProfileSectorResolved(sector, func(raw []byte) error {
 		return patchProfileName(raw, name)
 	})
 }
@@ -724,19 +731,22 @@ func (d *Device) SetProfileReportRate(sector int, rateByte byte) error {
 // SetProfileReportRateHz sets a profile's polling rate (Hz) and makes it take
 // effect. The firmware only loads a profile's rate on a profile *switch*, so we
 // bounce through another enabled profile and back.
-func (d *Device) SetProfileReportRateHz(sector, hz int) error {
+func (d *Device) SetProfileReportRateHz(sector, hz int) (int, error) {
 	v, ok := rateByteForHz(hz)
 	if !ok {
-		return fmt.Errorf("unsupported polling rate %d Hz", hz)
+		return 0, fmt.Errorf("unsupported polling rate %d Hz", hz)
 	}
 	actual, err := d.patchProfileSectorResolved(sector, func(raw []byte) error {
 		raw[0] = v
 		return nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return d.ReloadProfile(actual)
+	if err := d.ReloadProfile(actual); err != nil {
+		return 0, err
+	}
+	return actual, nil
 }
 
 // ReloadProfile forces the firmware to (re)apply a profile's settings by
@@ -746,11 +756,17 @@ func (d *Device) ReloadProfile(sector int) error {
 		return err
 	}
 	other := 0
-	if profs, err := d.Profiles(); err == nil {
-		for _, p := range profs {
-			if p.Sector != sector && p.Enabled {
-				other = p.Sector
-				break
+	// Only the lightweight control table is needed to find a bounce target.
+	// Profiles() also reads and decodes every 255-byte data sector.
+	if idx, err := d.onboardIndex(); err == nil {
+		if info, err := d.ProfileInfo(); err == nil {
+			if headers, err := d.profileHeaders(idx, info.Count); err == nil {
+				for _, header := range headers {
+					if header.Sector != sector && header.Enabled {
+						other = header.Sector
+						break
+					}
+				}
 			}
 		}
 	}

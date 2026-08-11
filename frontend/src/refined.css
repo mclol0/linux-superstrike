@@ -555,13 +555,13 @@ nav .icon { width: 17px; height: 17px; }
 .profile-setting-line strong, .profile-setting-line small { display: block; }
 .profile-setting-line strong { font-size: 11px; font-weight: 550; }
 .profile-setting-line small { margin-top: 4px; color: var(--hub-fg-35); font-size: 9px; }
-.profile-settings-panel .switch {
+.profile-settings-panel .switch, .dpi-stage-switch {
   width: 38px; height: 22px; border: 1px solid var(--hub-fg-12); border-radius: 2px;
   background: #242426; box-shadow: none;
 }
-.profile-settings-panel .switch i { left: 3px; top: 3px; width: 14px; height: 14px; border-radius: 1px; background: var(--hub-fg-35); box-shadow: none; }
-.profile-settings-panel .switch.on { border-color: rgba(16,140,255,.6); background: #253649; }
-.profile-settings-panel .switch.on i { left: 19px; background: var(--hub-blue); box-shadow: none; }
+.profile-settings-panel .switch i, .dpi-stage-switch i { left: 3px; top: 3px; width: 14px; height: 14px; border-radius: 1px; background: var(--hub-fg-35); box-shadow: none; }
+.profile-settings-panel .switch.on, .dpi-stage-switch.on { border-color: rgba(16,140,255,.6); background: #253649; }
+.profile-settings-panel .switch.on i, .dpi-stage-switch.on i { left: 19px; background: var(--hub-blue); box-shadow: none; }
 .profile-state-dot { width: 8px; height: 8px; border-radius: 1px; background: #555; }
 .profile-state-dot.on { background: var(--hub-blue); box-shadow: none; }
 .profile-dpi-summary h2 { margin-bottom: 13px; }

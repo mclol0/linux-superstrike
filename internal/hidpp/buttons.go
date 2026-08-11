@@ -173,9 +173,9 @@ func (a ButtonAction) encode() [4]byte {
 // SetProfileButton writes one button slot (0..15) of a profile, leaving every
 // other byte intact, then re-CRCs, writes, and reloads the resolved RAM sector
 // so the mouse stops using its cached assignment table.
-func (d *Device) SetProfileButton(sector, index int, a ButtonAction) error {
+func (d *Device) SetProfileButton(sector, index int, a ButtonAction) (int, error) {
 	if index < 0 || index >= 16 {
-		return fmt.Errorf("button index %d out of range", index)
+		return 0, fmt.Errorf("button index %d out of range", index)
 	}
 	enc := a.encode()
 	actual, err := d.patchProfileSectorResolved(sector, func(raw []byte) error {
@@ -184,7 +184,10 @@ func (d *Device) SetProfileButton(sector, index int, a ButtonAction) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return d.ReloadProfile(actual)
+	if err := d.ReloadProfile(actual); err != nil {
+		return 0, err
+	}
+	return actual, nil
 }

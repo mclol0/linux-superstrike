@@ -56,7 +56,7 @@
 .dpi-context-bar span, .dpi-context-bar strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dpi-context-bar span { color: var(--hub-muted); font-size: 9px; }
 .dpi-context-bar strong { margin-top: 6px; font-size: 12px; font-weight: 550; }
-.dpi-stage-row.onboard { grid-template-columns: 22px 46px minmax(260px,1fr) 86px 30px 66px 92px 64px; }
+.dpi-stage-row.onboard { grid-template-columns: 22px 46px minmax(260px,1fr) 86px 30px 66px 92px; }
 .dpi-stage-head { grid-template-columns: 90px 1fr 112px 170px; }
 .dpi-save-note { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .dpi-save-note > p { max-width: 680px; margin: 0; line-height: 1.5; }

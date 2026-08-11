@@ -31,6 +31,15 @@ function editableProfileName(profile: Profile | undefined) {
   return profile.name
 }
 
+function buttonAssignmentName(kind:number,code:number,mods:number,choices:Choices) {
+  if(kind===0)return 'Disabled'
+  const list=kind===1?choices.mouse:kind===2?choices.keys:kind===3?choices.media:choices.functions
+  const name=list.find(choice=>choice.code===code)?.name||`Code ${code}`
+  if(kind!==2)return name
+  const modifierNames=[['Ctrl',1],['Shift',2],['Alt',4],['Super',8]].filter(([,bit])=>mods&Number(bit)).map(([label])=>label)
+  return modifierNames.length?`${modifierNames.join('+')} + ${name}`:`Key: ${name}`
+}
+
 function InlineStatus({state,idle='Stored onboard'}: {state?:OperationState;idle?:string}) {
   return <div className={`inline-status ${state?.tone||'idle'}`}><i/>{state?.text||idle}</div>
 }
@@ -119,13 +128,14 @@ function Metric({label, value, suffix, detail, icon}: {label: string; value: str
 
 function Dashboard({state, notify}: {state: DeviceState; notify: (s: string, e?: boolean) => void}) {
   const [selectedRate, setSelectedRate] = useState(0)
+  const [activeSector, setActiveSector] = useState(0)
   const [savingRate, setSavingRate] = useState(false)
   const [operation,setOperation] = useState<OperationState>()
   useEffect(() => {
     if (!state.connected) return
     api.profiles().then(profiles => {
       const active = profiles.find(profile => profile.active)
-      if (active) setSelectedRate(active.pollingRate)
+      if (active) { setSelectedRate(active.pollingRate); setActiveSector(active.sector) }
     }).catch(() => {})
   }, [state.connected, state.profile])
   const chooseRate = async (rate: number) => {
@@ -133,12 +143,10 @@ function Dashboard({state, notify}: {state: DeviceState; notify: (s: string, e?:
     const previous = selectedRate
     setSelectedRate(rate); setSavingRate(true); setOperation({text:'Writing polling rate…',tone:'saving'})
     try {
-      const profiles = await api.profiles()
-      const active = profiles.find(profile => profile.active)
-      if (!active) throw new Error('No active onboard profile was found')
-      await api.updateRate(active.sector, rate)
-      const updated = await api.profiles()
-      setSelectedRate(updated.find(profile => profile.active)?.pollingRate || rate)
+      let sector=activeSector
+      if(!sector){const profiles=await api.profiles();const active=profiles.find(profile=>profile.active);if(!active)throw new Error('No active onboard profile was found');sector=active.sector;setActiveSector(sector)}
+      const actualSector=await api.updateRate(sector, rate)
+      setActiveSector(actualSector)
       setOperation({text:`${rate} Hz stored in the active profile`,tone:'saved'})
       notify(`Polling rate set to ${rate} Hz`)
     } catch (error) {
@@ -161,8 +169,19 @@ function DPIPage({notify}: {notify: (s: string, e?: boolean) => void}) {
   const load = useCallback(async()=>{setBusy(true);try{const list=await api.profiles();const active=list.find(profile=>profile.active)||list[0];setActiveProfile(active);setDrafts(active?.dpiStages||[]);if(active)setSelected(active.currentDpiStage>=0?active.currentDpiStage:active.defaultDpiStage)}catch(error){notify(String(error),true)}finally{setBusy(false)}},[notify])
   useEffect(()=>{load()},[load])
   const edit=(index:number,value:number)=>setDrafts(current=>current.map(stage=>stage.index===index?{...stage,x:value,y:value}:stage))
-  const save=async(stage:DPIStage,enabled=stage.enabled,makeDefault=false)=>{if(!activeProfile||saving!==undefined)return;setSaving(stage.index);setOperation({text:makeDefault?'Changing profile default…':`Writing slot ${stage.index+1}…`,tone:'saving'});try{await api.updateDPIStage(activeProfile.sector,stage.index,Math.max(100,Math.min(44000,stage.x)),Math.max(100,Math.min(44000,stage.y)),enabled,makeDefault);setOperation({text:makeDefault?`Slot ${stage.index+1} is the stored default`:`Slot ${stage.index+1} stored onboard`,tone:'saved'});notify(makeDefault?`DPI slot ${stage.index+1} set as default`:`DPI slot ${stage.index+1} saved to the mouse`);await load()}catch(error){setOperation({text:'DPI write failed',tone:'error'});notify(String(error),true)}finally{setSaving(undefined)}}
-  const selectStage=async(stage:DPIStage)=>{if(!activeProfile||saving!==undefined||!stage.enabled)return;setSaving(stage.index);setSelected(stage.index);setOperation({text:`Applying ${stage.x} DPI live…`,tone:'saving'});try{await api.selectDPI(activeProfile.sector,stage.x);setOperation({text:`Slot ${stage.index+1} is active now`,tone:'saved'});notify(`DPI slot ${stage.index+1} selected`);await load()}catch(error){setOperation({text:'Could not select the DPI slot',tone:'error'});notify(String(error),true)}finally{setSaving(undefined)}}
+  const save=async(stage:DPIStage,enabled=stage.enabled,makeDefault=false)=>{
+    if(!activeProfile||saving!==undefined)return
+    const x=Math.max(100,Math.min(44000,stage.x)),y=Math.max(100,Math.min(44000,stage.y)),updatedStage={...stage,x,y,enabled}
+    setSaving(stage.index);setOperation({text:makeDefault?'Changing profile default…':`Writing slot ${stage.index+1}…`,tone:'saving'})
+    try{
+      const actualSector=await api.updateDPIStage(activeProfile.sector,stage.index,x,y,enabled,makeDefault)
+      const nextStages=drafts.map(item=>item.index===stage.index?updatedStage:item),defaultIndex=makeDefault?stage.index:activeProfile.defaultDpiStage,liveStage=nextStages.find(item=>item.index===defaultIndex)
+      setDrafts(nextStages);setSelected(defaultIndex)
+      setActiveProfile(current=>current?{...current,sector:actualSector,dpiStages:nextStages,defaultDpiStage:defaultIndex,currentDpiStage:defaultIndex,dpiX:liveStage?.x||current.dpiX,dpiY:liveStage?.y||current.dpiY}:current)
+      setOperation({text:makeDefault?`Slot ${stage.index+1} is the stored default`:`Slot ${stage.index+1} stored onboard`,tone:'saved'});notify(makeDefault?`DPI slot ${stage.index+1} set as default`:`DPI slot ${stage.index+1} saved to the mouse`)
+    }catch(error){setOperation({text:'DPI write failed',tone:'error'});notify(String(error),true);load()}finally{setSaving(undefined)}
+  }
+  const selectStage=async(stage:DPIStage)=>{if(!activeProfile||saving!==undefined||!stage.enabled)return;setSaving(stage.index);setSelected(stage.index);setOperation({text:`Applying ${stage.x} DPI live…`,tone:'saving'});try{await api.selectDPI(activeProfile.sector,stage.x);setActiveProfile(current=>current?{...current,currentDpiStage:stage.index,dpiX:stage.x,dpiY:stage.y}:current);setOperation({text:`Slot ${stage.index+1} is active now`,tone:'saved'});notify(`DPI slot ${stage.index+1} selected`)}catch(error){setOperation({text:'Could not select the DPI slot',tone:'error'});notify(String(error),true);load()}finally{setSaving(undefined)}}
   if(busy&&!activeProfile)return <Loader text="Reading active profile"/>
   if(!activeProfile)return <EmptyState state={{connected:false,permissionDenied:false} as DeviceState}/>
   if(!activeProfile.hasDpiStages)return <div className="dpi-unsupported"><h1>DPI stages unavailable</h1><p>This onboard profile uses an older layout that does not safely expose five independent stages.</p></div>
@@ -180,7 +199,6 @@ function DPIPage({notify}: {notify: (s: string, e?: boolean) => void}) {
         <span className="dpi-unit">DPI</span>
         <button className={`switch dpi-stage-switch ${stage.enabled?'on':''}`} disabled={saving!==undefined} onClick={event=>{event.stopPropagation();save(stage,!stage.enabled,false)}}><i/></button>
         <button className={`dpi-default-button ${activeProfile.defaultDpiStage===stage.index?'active':''}`} disabled={!stage.enabled||saving!==undefined||activeProfile.defaultDpiStage===stage.index} onClick={event=>{event.stopPropagation();save(stage,true,true)}}>{activeProfile.defaultDpiStage===stage.index?'Default':'Set default'}</button>
-        <button className="dpi-row-save" disabled={!stage.enabled||saving!==undefined} onClick={event=>{event.stopPropagation();save(stage)}}>{saving===stage.index?'Saving…':'Save'}</button>
       </div>)}</div>
       <div className="dpi-save-note"><p>The filled circle is the live DPI. “Default” is the slot stored for the next profile load. Mouse DPI controls cycle through enabled slots.</p><InlineStatus state={operation} idle="Changes are stored directly on the mouse"/></div>
     </main>
@@ -195,7 +213,7 @@ function ProfilesPage({notify}: {notify: (s: string, e?: boolean) => void}) {
   const profile=profiles[selected]
   const shownName=editableProfileName(profile)
   useEffect(()=>{setName(editableProfileName(profile))},[profile?.sector,profile?.name])
-  const action = async(label:string,fn:()=>Promise<unknown>)=>{setOperation({text:'Updating onboard profile…',tone:'saving'});try{await fn();setOperation({text:label,tone:'saved'});notify(label);await load()}catch(error){setOperation({text:'Could not update the profile',tone:'error'});notify(String(error),true)}}
+  const action = async(label:string,fn:()=>Promise<unknown>,apply:(result:unknown)=>void)=>{setOperation({text:'Updating onboard profile…',tone:'saving'});try{const result=await fn();apply(result);setOperation({text:label,tone:'saved'});notify(label)}catch(error){setOperation({text:'Could not update the profile',tone:'error'});notify(String(error),true);load()}}
   if(busy&&!profiles.length)return <Loader text="Reading onboard profiles"/>
   if(!profile)return <EmptyState state={{connected:false,permissionDenied:false} as DeviceState}/>
   const defaultStage=profile.dpiStages.find(stage=>stage.index===profile.defaultDpiStage)
@@ -208,7 +226,7 @@ function ProfilesPage({notify}: {notify: (s: string, e?: boolean) => void}) {
     <main className="profile-settings-panel profile-settings-wide">
       <header className="profile-summary-header"><div><span>PROFILE {String(profile.index).padStart(2,'0')}</span><h1>{friendlyName(profile.name,`Profile ${profile.index}`)}</h1><p>{profile.active?'Currently active on the mouse':'Stored in onboard memory'}</p></div><div className={`profile-live-badge ${profile.active?'active':''}`}><i/>{profile.active?'In use now':'Stored profile'}</div><section className="profile-summary-stats"><div><span>Default DPI</span><strong>{defaultStage?.x||profile.dpiX}</strong></div><div><span>Stored polling</span><strong>{profile.pollingRate} Hz</strong></div><div><span>DPI slots</span><strong>{profile.dpiStages.filter(stage=>stage.enabled).length} enabled</strong></div><div><span>Onboard state</span><strong>{profile.enabled?'Enabled':'Disabled'}</strong></div></section></header>
       <div className="profile-detail-body">
-        <div className="profile-overview-grid"><section className="profile-detail-card"><span className="settings-kicker">IDENTITY</span><h2>Profile name</h2><p className="section-description">The name shown when managing this onboard slot.</p><label>Name</label><input value={name} maxLength={24} onChange={event=>setName(event.target.value)}/><button className="button subtle full" disabled={!name.trim()||name.trim()===shownName} onClick={()=>action('Profile renamed',()=>api.rename(profile.sector,name.trim()))}>Save name</button></section><section className="profile-detail-card"><span className="settings-kicker">ONBOARD BEHAVIOR</span><h2>Profile state</h2><p className="section-description">Control whether this profile is available and active.</p><div className="profile-setting-line"><div><strong>Enabled</strong><small>Available when cycling profiles on the mouse</small></div><button className={`switch ${profile.enabled?'on':''}`} onClick={()=>action(profile.enabled?'Profile disabled':'Profile enabled',()=>api.enable(profile.index,!profile.enabled))}><i/></button></div><div className="profile-setting-line"><div><strong>Live profile</strong><small>{profile.active?'This profile is in use now':'Another profile is currently in use'}</small></div><span className={`profile-state-dot ${profile.active?'on':''}`}/></div>{!profile.active&&<button className="button primary full" disabled={!profile.enabled} onClick={()=>action('Profile activated',()=>api.activate(profile.sector))}>Use this profile</button>}</section></div>
+        <div className="profile-overview-grid"><section className="profile-detail-card"><span className="settings-kicker">IDENTITY</span><h2>Profile name</h2><p className="section-description">The name shown when managing this onboard slot.</p><label>Name</label><input value={name} maxLength={24} onChange={event=>setName(event.target.value)}/><button className="button subtle full" disabled={!name.trim()||name.trim()===shownName} onClick={()=>action('Profile renamed',()=>api.rename(profile.sector,name.trim()),result=>setProfiles(current=>current.map((item,index)=>index===selected?{...item,sector:Number(result),name:name.trim()}:item)))}>Save name</button></section><section className="profile-detail-card"><span className="settings-kicker">ONBOARD BEHAVIOR</span><h2>Profile state</h2><p className="section-description">Control whether this profile is available and active.</p><div className="profile-setting-line"><div><strong>Enabled</strong><small>Available when cycling profiles on the mouse</small></div><button className={`switch ${profile.enabled?'on':''}`} onClick={()=>action(profile.enabled?'Profile disabled':'Profile enabled',()=>api.enable(profile.index,!profile.enabled),()=>setProfiles(current=>current.map((item,index)=>index===selected?{...item,enabled:!profile.enabled}:item)))}><i/></button></div><div className="profile-setting-line"><div><strong>Live profile</strong><small>{profile.active?'This profile is in use now':'Another profile is currently in use'}</small></div><span className={`profile-state-dot ${profile.active?'on':''}`}/></div>{!profile.active&&<button className="button primary full" disabled={!profile.enabled} onClick={()=>action('Profile activated',()=>api.activate(profile.sector),()=>setProfiles(current=>current.map((item,index)=>({...item,active:index===selected}))))}>Use this profile</button>}</section></div>
         <div className="profile-data-grid"><section className="profile-detail-card profile-dpi-summary"><span className="settings-kicker">STORED DPI</span><h2>DPI slots</h2><p className="section-description">The five sensitivity stages saved in this profile.</p>{profile.hasDpiStages?<div className="profile-dpi-list">{profile.dpiStages.map(stage=><div key={stage.index} className={!stage.enabled?'disabled':''}><i style={{background:dpiColors[stage.index]}}/><span>Slot {stage.index+1}</span><strong>{stage.x===stage.y?stage.x:`${stage.x} × ${stage.y}`} DPI</strong>{profile.defaultDpiStage===stage.index&&<em>Default</em>}<small>{stage.enabled?'Enabled':'Disabled'}</small></div>)}</div>:<p className="profile-dpi-unavailable">Independent DPI slots aren’t exposed by this profile layout.</p>}</section><section className="profile-detail-card profile-button-summary"><span className="settings-kicker">STORED CONTROLS</span><h2>Button mappings</h2><p className="section-description">Assignments saved in this onboard profile.</p><div className="profile-button-list">{profile.buttonMappings.map(button=><div key={button.index}><i>{button.index+1}</i><span>{button.name}</span><strong>{button.assignment}</strong></div>)}</div></section></div>
       </div>
       <footer className="profile-operation"><InlineStatus state={operation} idle="Changes are stored directly on the mouse"/></footer>
@@ -226,7 +244,7 @@ function Buttons({notify}: {notify: (s: string, e?: boolean) => void}) {
   if(!data||!choices||!item)return <Loader text="Reading button assignments"/>
   const categories=[{name:'Mouse',kind:1},{name:'Keyboard',kind:2},{name:'Media',kind:3},{name:'Functions',kind:4},{name:'Disabled',kind:0}]
   const options=kind===1?choices.mouse:kind===2?choices.keys:kind===3?choices.media:kind===4?choices.functions:[]
-  const save=async()=>{setSaving(true);setOperation({text:'Writing assignment…',tone:'saving'});try{await api.setButton(data.sector,item.index,kind,code,mods);setOperation({text:`${item.name} stored in this profile`,tone:'saved'});notify(`${item.name} remapped`);await load()}catch(error){setOperation({text:'Button assignment failed',tone:'error'});notify(String(error),true)}finally{setSaving(false)}}
+  const save=async()=>{setSaving(true);setOperation({text:'Writing assignment…',tone:'saving'});try{const actualSector=await api.setButton(data.sector,item.index,kind,code,mods),description=buttonAssignmentName(kind,code,mods,choices),action={Kind:kind,Code:code,Mods:mods,Raw:item.action.Raw};setData(current=>current?{...current,sector:actualSector,buttons:current.buttons.map((button,index)=>index===selected?{...button,description,action}:button)}:current);setOperation({text:`${item.name} stored in this profile`,tone:'saved'});notify(`${item.name} remapped`)}catch(error){setOperation({text:'Button assignment failed',tone:'error'});notify(String(error),true);load()}finally{setSaving(false)}}
   return <div className="button-mapper page-enter">
     <section className="button-visual-panel">
       <div className="button-top-view"><MouseArt interactive mappingControls mappingAssignments={data.buttons.map(button=>button.description)} selected={selected} onSelect={index=>{if(data.buttons[index])setSelected(index)}}/></div>

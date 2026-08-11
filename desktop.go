@@ -313,13 +313,21 @@ func (c *DesktopController) GetProfiles() ([]ProfileDTO, error) {
 	return out, nil
 }
 
-func (c *DesktopController) UpdateDPIStage(sector, stage, x, y int, enabled, makeDefault bool) error {
+func (c *DesktopController) UpdateDPIStage(sector, stage, x, y int, enabled, makeDefault bool) (int, error) {
 	if x < 100 || x > hidpp.MaxDPI || y < 100 || y > hidpp.MaxDPI {
-		return fmt.Errorf("DPI must be between 100 and %d", hidpp.MaxDPI)
+		return 0, fmt.Errorf("DPI must be between 100 and %d", hidpp.MaxDPI)
 	}
-	return c.withDevice(func(d *hidpp.Device) error {
-		return d.WriteProfileDPIStage(sector, stage, x, y, enabled, makeDefault)
-	})
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+	if err := c.ensureDeviceLocked(); err != nil {
+		return 0, err
+	}
+	actual, err := c.dev.WriteProfileDPIStage(sector, stage, x, y, enabled, makeDefault)
+	if err != nil {
+		return 0, err
+	}
+	c.activeProfileSector = actual
+	return actual, nil
 }
 
 func (c *DesktopController) SelectDPI(sector, dpi int) error {
@@ -345,8 +353,18 @@ func (c *DesktopController) UpdateDPI(sector, x, y int) error {
 	return c.withDevice(func(d *hidpp.Device) error { return d.WriteProfileResolution(sector, x, y) })
 }
 
-func (c *DesktopController) UpdatePollingRate(sector, hz int) error {
-	return c.withDevice(func(d *hidpp.Device) error { return d.SetProfileReportRateHz(sector, hz) })
+func (c *DesktopController) UpdatePollingRate(sector, hz int) (int, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+	if err := c.ensureDeviceLocked(); err != nil {
+		return 0, err
+	}
+	actual, err := c.dev.SetProfileReportRateHz(sector, hz)
+	if err != nil {
+		return 0, err
+	}
+	c.activeProfileSector = actual
+	return actual, nil
 }
 
 func (c *DesktopController) ActivateProfile(sector int) error {
@@ -359,12 +377,24 @@ func (c *DesktopController) ActivateProfile(sector int) error {
 	})
 }
 
-func (c *DesktopController) RenameProfile(sector int, name string) error {
+func (c *DesktopController) RenameProfile(sector int, name string) (int, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return fmt.Errorf("profile name cannot be empty")
+		return 0, fmt.Errorf("profile name cannot be empty")
 	}
-	return c.withDevice(func(d *hidpp.Device) error { return d.SetProfileName(sector, name) })
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+	if err := c.ensureDeviceLocked(); err != nil {
+		return 0, err
+	}
+	actual, err := c.dev.SetProfileName(sector, name)
+	if err != nil {
+		return 0, err
+	}
+	if sector == c.activeProfileSector || sector >= 0x0100 {
+		c.activeProfileSector = actual
+	}
+	return actual, nil
 }
 
 func (c *DesktopController) SetProfileEnabled(index int, enabled bool) error {
@@ -445,12 +475,22 @@ func (c *DesktopController) GetButtonChoices() ButtonChoicesDTO {
 	return ButtonChoicesDTO{toChoices(hidpp.MouseButtonChoices), toChoices(hidpp.KeyChoices), toChoices(hidpp.MediaChoices), toChoices(hidpp.FunctionChoices)}
 }
 
-func (c *DesktopController) SetButton(sector, index, kind int, code uint16, mods byte) error {
+func (c *DesktopController) SetButton(sector, index, kind int, code uint16, mods byte) (int, error) {
 	if kind < int(hidpp.ButtonDisabled) || kind > int(hidpp.ButtonFunction) {
-		return fmt.Errorf("invalid button action")
+		return 0, fmt.Errorf("invalid button action")
 	}
 	a := hidpp.ButtonAction{Kind: hidpp.ButtonKind(kind), Code: code, Mods: mods}
-	return c.withDevice(func(d *hidpp.Device) error { return d.SetProfileButton(sector, index, a) })
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
+	if err := c.ensureDeviceLocked(); err != nil {
+		return 0, err
+	}
+	actual, err := c.dev.SetProfileButton(sector, index, a)
+	if err != nil {
+		return 0, err
+	}
+	c.activeProfileSector = actual
+	return actual, nil
 }
 
 func (c *DesktopController) GetHaptics() (HapticsPayload, error) {

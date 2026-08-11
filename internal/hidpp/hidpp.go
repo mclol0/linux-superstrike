@@ -91,12 +91,12 @@ func errName(code byte) string {
 // on a receiver). All calls are serialised by mu so request/response pairs on
 // the shared hidraw fd never interleave.
 type Device struct {
-	mu       sync.Mutex
-	f        *os.File
-	Path     string // /dev/hidrawN
-	Index    byte   // HID++ device index
-	Name     string // HID name from sysfs, if known
-	Timeout  time.Duration
+	mu      sync.Mutex
+	f       *os.File
+	Path    string // /dev/hidrawN
+	Index   byte   // HID++ device index
+	Name    string // HID name from sysfs, if known
+	Timeout time.Duration
 }
 
 // Open opens a hidraw node for HID++ traffic. The caller is responsible for
@@ -122,6 +122,13 @@ func (d *Device) Close() error {
 // retries reads past unrelated notifications until the matching reply arrives
 // or the timeout elapses.
 func (d *Device) Call(featureIndex, function byte, params ...byte) ([]byte, error) {
+	return d.callWithTimeout(d.Timeout, featureIndex, function, params...)
+}
+
+// callWithTimeout is used by commands with known acknowledgement behaviour.
+// Most HID++ calls keep the normal device timeout; profile-memory writes use a
+// shorter wait because some firmware applies them without sending a reply.
+func (d *Device) callWithTimeout(timeout time.Duration, featureIndex, function byte, params ...byte) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -145,7 +152,7 @@ func (d *Device) Call(featureIndex, function byte, params ...byte) ([]byte, erro
 	// addressed to this feature with our software id is this request's reply.
 	// We match on feature index + software id (low nibble) rather than the full
 	// function byte, since some setters echo the function nibble inconsistently.
-	deadline := time.Now().Add(d.Timeout)
+	deadline := time.Now().Add(timeout)
 	for {
 		resp, err := d.read(deadline)
 		if err != nil {
