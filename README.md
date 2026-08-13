@@ -32,7 +32,77 @@ your settings apply instantly **and persist on the mouse itself**.
   (DPI/profile cycle, etc.), or disable it.
 - **Haptics** — tune the analog buttons' **click haptics**, **actuation point**,
   and **rapid trigger** (feature `0x1B0C`).
+- **Panel indicator** — optional tray icon showing the battery level at a
+  glance, with a menu for the exact reading. Styles: battery bar and
+  percentage, bar only, or percentage only.
+- **Low battery alerts** — desktop notifications at configurable thresholds
+  (20 / 10 / 5 % by default), each firing once per discharge cycle.
+- **Settings** — indicator style, alert thresholds, autostart at login.
 - Clean, themed UI; everything writes to onboard memory and **survives reboots**.
+
+## Screenshots
+
+| | |
+| --- | --- |
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Settings](docs/screenshots/settings.png) |
+| Dashboard | Settings |
+
+Panel indicator, sitting alongside the usual system icons:
+
+![Panel indicator](docs/screenshots/panel-indicator.png)
+
+Low battery alert:
+
+![Low battery alert](docs/screenshots/low-battery-alert.png)
+
+## Panel indicator & battery alerts
+
+Both are optional and configured in the **Settings** tab.
+
+The indicator registers as a **StatusNotifierItem**, the same mechanism every
+other tray application uses, so it is not tied to a distribution. What it needs
+is a host for that protocol:
+
+| Desktop | Works out of the box? |
+| --- | --- |
+| KDE Plasma | Yes — native StatusNotifierItem host |
+| Ubuntu (GNOME) | Yes — ships `gnome-shell-extension-appindicator` enabled |
+| Zorin OS | Yes — ships its own AppIndicator extension enabled |
+| Cinnamon, MATE, LXQt | Yes |
+| Debian (GNOME) | Install `gnome-shell-extension-appindicator`, then enable it |
+| Fedora (GNOME) | Install `gnome-shell-extension-appindicator` |
+| Xfce | Install `xfce4-statusnotifier-plugin` |
+
+Without a host the app still runs and the alerts still fire; only the panel icon
+is missing, and the Settings tab says so instead of failing silently.
+
+Notifications go through `org.freedesktop.Notifications`, which every desktop
+implements, so those are portable everywhere.
+
+The indicator icon is rendered as a wide PNG rather than an SVG on purpose:
+Fyne rasterises SVG tray icons into a fixed square, which would letterbox a wide
+icon and make it *smaller* in the panel.
+
+Alerts go out over `org.freedesktop.Notifications` so they can carry the
+`urgency` hint — readings at or below 10 % are marked critical and stay on
+screen until dismissed. Each threshold fires once and only re-arms after the
+level climbs a few points clear of it, so a reading hovering on the boundary
+does not warn on every poll. Charging resets all thresholds.
+
+```sh
+superstrike -tray          # start as an indicator only, no window
+superstrike -testnotify    # post one sample notification per threshold
+```
+
+To have the indicator start with your session, enable *Start automatically at
+login* in Settings — it manages an XDG autostart entry for you.
+
+### Backdrop
+
+The window backdrop ships with a neutral built-in mark. Drop your own image at
+`~/.config/superstrike/logo.svg` (`.png` / `.jpg` also work) to replace it; no
+rebuild needed, just restart. No vendor logo is bundled — this project is not
+affiliated with Logitech.
 
 ## Install
 
@@ -110,6 +180,8 @@ superstrike -probe        # device info + full HID++ feature table
 superstrike -profiles     # list all profiles + control sectors
 superstrike -measurerate  # measure the real report rate (move the mouse)
 superstrike -scan         # list Logitech hidraw nodes + HID++ responses
+superstrike -tray         # start as a panel indicator only, without a window
+superstrike -testnotify   # post one sample low-battery notification per threshold
 ```
 
 ## Status & compatibility

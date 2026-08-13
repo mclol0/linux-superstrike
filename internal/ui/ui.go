@@ -24,6 +24,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -78,37 +79,78 @@ type App struct {
 	// buttons / haptics
 	btnBox *fyne.Container
 	hapBox *fyne.Container
+
+	// panel indicator; desk is nil when the driver has no system tray
+	desk               desktop.App
+	trayMenu           *fyne.Menu
+	trayName, trayBatt *fyne.MenuItem
+	trayMute           *fyne.MenuItem
+	trayWanted         bool      // indicator enabled in settings
+	trayStyle          TrayStyle // what the indicator draws
+	trayKey            string    // last rendered icon state, to skip no-op redraws
+
+	alerts       *batteryAlerts // low-battery notifications
+	backdropMark *canvas.Image  // backdrop image, swappable at runtime
+
+	// last battery reading, so a settings change can redraw the indicator
+	// without waiting for the next poll
+	lastBatt   hidpp.Battery
+	lastBattOK bool
 }
 
-// Run builds and shows the control panel; it blocks until the window closes.
-func Run() {
-	a := &App{fyne: app.NewWithID("com.superstrike.panel")}
+// Run builds the control panel and blocks until the app exits.
+//
+// startHidden launches straight into the panel indicator with no window, which
+// is what the autostart entry uses. It is ignored when the driver has no system
+// tray, since that would leave no way to reach the app at all.
+func Run(startHidden bool) {
+	a := &App{
+		fyne:   app.NewWithID("com.superstrike.panel"),
+		alerts: newBatteryAlerts(),
+	}
 	a.curPath.Store("")
 	a.fyne.Settings().SetTheme(accentTheme{})
 	a.fyne.SetIcon(iconRes)
 	a.win = a.fyne.NewWindow("Superstrike Control")
 	a.win.SetIcon(iconRes)
-	a.win.Resize(fyne.NewSize(960, 720))
+	a.win.Resize(fyne.NewSize(1040, 760))
 
 	a.status = widget.NewLabel("starting…")
 	a.status.TextStyle = fyne.TextStyle{Monospace: true}
+
+	a.loadSettings()
+
+	// The tray is set up before the tabs are built, because the Settings tab
+	// reports whether the indicator is actually running and reads a.desk /
+	// a.trayMute to do it. Building it first left it permanently claiming this
+	// desktop has no system tray.
+	hasTray := false
+	if a.trayWanted {
+		hasTray = a.setupTray()
+	}
 
 	a.tabs = container.NewAppTabs(
 		container.NewTabItemWithIcon("Dashboard", theme.HomeIcon(), a.buildDashboard()),
 		container.NewTabItemWithIcon("Profiles", theme.StorageIcon(), a.buildProfiles()),
 		container.NewTabItemWithIcon("Buttons", theme.GridIcon(), a.buildButtons()),
 		container.NewTabItemWithIcon("Haptics", theme.MediaPlayIcon(), a.buildHaptics()),
+		container.NewTabItemWithIcon("Settings", theme.SettingsIcon(), a.buildSettings()),
 	)
 	a.tabs.SetTabLocation(container.TabLocationLeading)
 	a.tabs.OnSelected = a.onTabSelected
 
-	statusBar := container.NewVBox(widget.NewSeparator(), a.status)
-	a.win.SetContent(container.NewBorder(nil, statusBar, nil, nil, a.tabs))
+	statusBar := container.NewVBox(widget.NewSeparator(), container.NewPadded(a.status))
+	a.win.SetContent(a.backdrop(container.NewBorder(nil, statusBar, nil, nil, a.tabs)))
 
 	a.fyne.Lifecycle().SetOnStarted(func() {
 		a.startAutoRefresh()
 		a.startRateMonitor()
 	})
+
+	if startHidden && hasTray {
+		a.fyne.Run() // indicator only; the menu opens the window on demand
+		return
+	}
 	a.win.ShowAndRun()
 }
 
@@ -153,9 +195,13 @@ func (a *App) tick() {
 	}
 	a.opMu.Unlock()
 
+	// Evaluated off the UI goroutine: this only touches D-Bus and its own state.
+	a.alerts.check(batt.Percent, batt.Charging, dev != nil && batt.Available)
+
 	fyne.Do(func() {
 		if dev == nil {
 			a.setConnected(false)
+			a.updateTray("", hidpp.Battery{}, false)
 			if permDenied {
 				a.status.SetText("mouse found but no permission — install the udev rule (see README), then replug")
 				a.dName.SetText("Permission denied")
@@ -175,6 +221,8 @@ func (a *App) tick() {
 		a.status.SetText(fmt.Sprintf("connected: %s   [%s]", name, dev.Path))
 		a.dName.SetText(name)
 		a.batt.set(batt.Percent, batt.Charging, batt.Available)
+		a.lastBatt, a.lastBattOK = batt, batt.Available
+		a.updateTray(name, batt, true)
 		switch {
 		case !batt.Available:
 			a.dBattPct.SetText("n/a")
@@ -330,32 +378,27 @@ func caption(s string) *widget.Label {
 }
 
 // metricTile builds a card showing a small caption above a large accent value,
-// with an optional italic hint line below.
+// with an optional hint line below. The value is vertically centred so a grid
+// of tiles reads as an even row of numbers rather than top-aligned text.
 func metricTile(captionText, hint string) (*fyne.Container, *canvas.Text) {
-	cap := canvas.NewText(strings.ToUpper(captionText), rgb(0x7B8499))
-	cap.TextSize = 11
-	cap.TextStyle = fyne.TextStyle{Bold: true}
 	val := canvas.NewText("—", rgb(accent))
-	val.TextSize = 34
+	val.TextSize = 44
 	val.TextStyle = fyne.TextStyle{Bold: true}
-	items := []fyne.CanvasObject{cap, val}
-	if hint != "" {
-		h := canvas.NewText(hint, rgb(0x6B7180))
-		h.TextSize = 11
-		h.TextStyle = fyne.TextStyle{Italic: true}
-		items = append(items, h)
-	}
-	body := container.NewPadded(container.NewVBox(items...))
-	return container.NewStack(tileBG(), body), val
-}
 
-// tileBG is a subtle rounded surface behind a tile.
-func tileBG() *canvas.Rectangle {
-	r := canvas.NewRectangle(color.NRGBA{0xFF, 0xFF, 0xFF, 0x08})
-	r.StrokeColor = color.NRGBA{0x5B, 0xC0, 0xFF, 0x33}
-	r.StrokeWidth = 1
-	r.CornerRadius = 12
-	return r
+	bottom := fyne.CanvasObject(layoutGap(1))
+	if hint != "" {
+		h := canvas.NewText(hint, rgb(textLo))
+		h.TextSize = 11
+		bottom = h
+	}
+
+	body := container.NewBorder(
+		sectionTitle(strings.ToUpper(captionText)), // top
+		bottom, // bottom
+		nil, nil,
+		container.NewCenter(val), // centre
+	)
+	return card(body), val
 }
 
 // ---- Dashboard ------------------------------------------------------------
@@ -369,16 +412,16 @@ func (a *App) buildDashboard() fyne.CanvasObject {
 	a.connDot = canvas.NewCircle(color.NRGBA{0x80, 0x44, 0x44, 0xFF})
 	dot := container.NewGridWrap(fyne.NewSize(13, 13), a.connDot)
 
-	title := canvas.NewText("PRO X 2  SUPERSTRIKE", rgb(0xF2F4F8))
-	title.TextSize = 30
+	title := canvas.NewText("PRO X 2  SUPERSTRIKE", rgb(textHi))
+	title.TextSize = 34
 	title.TextStyle = fyne.TextStyle{Bold: true}
-	subtitle := canvas.NewText("Linux control panel · HID++ direct", rgb(accent))
+	subtitle := canvas.NewText("Linux control panel · HID++ direct", rgb(textMid))
 	subtitle.TextSize = 13
-	subtitle.TextStyle = fyne.TextStyle{Italic: true}
 
 	header := container.NewVBox(
-		container.NewHBox(dot, layoutGap(6), title),
-		subtitle,
+		container.NewHBox(dot, layoutGap(10), title),
+		container.NewHBox(layoutGap(23), subtitle),
+		layoutGap(4),
 	)
 
 	profileTile, tProfile := metricTile("Active Profile", "")
@@ -386,29 +429,33 @@ func (a *App) buildDashboard() fyne.CanvasObject {
 	rateTile, tRate := metricTile("Polling Rate", "measured live — move the mouse")
 	a.tProfile, a.tDPI, a.tRate = tProfile, tDPI, tRate
 
-	// Battery as its own tile with the animated gauge.
-	battCap := canvas.NewText("BATTERY", rgb(0x7B8499))
-	battCap.TextSize = 11
-	battCap.TextStyle = fyne.TextStyle{Bold: true}
-	battStack := container.NewStack(a.batt, container.NewCenter(a.dBattPct))
-	battInner := container.NewPadded(container.NewVBox(battCap, battStack, a.dBatt))
-	battTile := container.NewStack(tileBG(), battInner)
+	// Battery gets the accent edge — it's the one live reading you glance at.
+	battBody := container.NewBorder(
+		sectionTitle("BATTERY"), // top
+		a.dBatt,                 // bottom
+		nil, nil,
+		container.NewStack(a.batt, container.NewCenter(a.dBattPct)),
+	)
+	battTile := accentCard(battBody)
 
 	// 2×2 grid of tiles that expands to fill the whole content area.
 	tiles := container.NewGridWithColumns(2, profileTile, dpiTile, rateTile, battTile)
 
+	// The mouse artwork sits beside the header as a small accent, not as a
+	// full-bleed wash — the backdrop already carries the brand mark.
+	art := canvas.NewImageFromResource(mouseRes)
+	art.FillMode = canvas.ImageFillContain
+
 	content := container.NewBorder(
-		container.NewVBox(header, layoutGap(6)), // top
+		container.NewBorder(nil, nil, nil,
+			container.NewGridWrap(fyne.NewSize(70, 97), art),
+			header,
+		), // top
 		nil, nil, nil,
 		tiles, // center — fills the rest of the window
 	)
 
-	// Faint artwork behind everything so the dashboard fills the window.
-	art := canvas.NewImageFromResource(mouseRes)
-	art.FillMode = canvas.ImageFillContain
-	art.Translucency = 0.9
-
-	return container.NewStack(art, container.NewPadded(content))
+	return container.NewPadded(content)
 }
 
 // layoutGap is a fixed-size transparent spacer.

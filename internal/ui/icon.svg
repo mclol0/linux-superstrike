@@ -1,31 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- App icon: same silhouette as superstrike.svg, reduced to a solid knockout
+       on an accent tile so it stays readable down to 16px in a task bar. -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1b6fff"/>
-      <stop offset="1" stop-color="#5bc0ff"/>
+      <stop offset="0" stop-color="#1E63C8"/>
+      <stop offset="1" stop-color="#4CC2FF"/>
     </linearGradient>
-    <radialGradient id="sheen" cx="0.5" cy="0.3" r="0.75">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    <radialGradient id="sheen" cx="0.5" cy="0.28" r="0.8">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <rect x="0" y="0" width="256" height="256" rx="58" fill="url(#bg)"/>
-  <rect x="0" y="0" width="256" height="256" rx="58" fill="url(#sheen)"/>
 
-  <!-- mouse body -->
-  <path d="M128 38
-           C95 38 83 74 81 108
-           C79 152 72 186 91 209
-           C104 225 120 228 128 228
-           C136 228 152 225 165 209
-           C184 186 177 152 175 108
-           C173 74 161 38 128 38 Z"
-        fill="#ffffff" opacity="0.97"/>
+  <rect width="256" height="256" rx="58" fill="url(#bg)"/>
+  <rect width="256" height="256" rx="58" fill="url(#sheen)"/>
+
+  <!-- Body: the superstrike.svg outline mapped into the icon box via
+       x' = 0.41*(x-170) + 128, y' = 0.355*(y-16) + 50. Same taper as the
+       dashboard art — narrow nose, widest past mid-length — but stretched
+       horizontally, because a faithfully-proportioned silhouette gets too
+       spindly to read at 16-32px. -->
+  <path d="M128 50
+           C145.2 50   156.7 64.2  159.2 84.1
+           C161.6 105.4 164.1 129.5 166.5 151.5
+           C169.0 176.4 156.7 206.2 128 206.2
+           C 99.3 206.2  87.0 176.4  89.5 151.5
+           C 91.9 129.5  94.4 105.4  96.8 84.1
+           C 99.3 64.2  110.8 50   128 50 Z"
+        fill="#FFFFFF" opacity="0.96"/>
 
   <!-- click split -->
-  <path d="M128 42 L128 120" stroke="#1b6fff" stroke-width="5" stroke-opacity="0.45"/>
+  <path d="M128 54 L128 116" stroke="#1E63C8" stroke-width="4" stroke-opacity="0.45"/>
   <!-- scroll wheel -->
-  <rect x="120" y="72" width="16" height="42" rx="8" fill="#1b6fff"/>
-  <!-- haptic pulse hint -->
-  <circle cx="128" cy="93" r="58" fill="none" stroke="#ffffff" stroke-width="3" stroke-opacity="0.25"/>
+  <rect x="121.5" y="73" width="13" height="32" rx="6.5" fill="#1E63C8"/>
 </svg>

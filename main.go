@@ -27,6 +27,8 @@ func main() {
 	profiles := flag.Bool("profiles", false, "headless: list all profiles + control sectors (read-only)")
 	measurerate := flag.Bool("measurerate", false, "measure the ACTUAL report rate from kernel input events (move the mouse)")
 	scan := flag.Bool("scan", false, "headless: list Logitech hidraw nodes + HID++ ping results")
+	tray := flag.Bool("tray", false, "start in the panel indicator only, without opening the window")
+	testnotify := flag.Bool("testnotify", false, "post one sample low-battery notification per threshold and exit")
 	flag.Parse()
 
 	switch {
@@ -40,8 +42,10 @@ func main() {
 		runMeasureRate()
 	case *scan:
 		runScan()
+	case *testnotify:
+		ui.TestAlert()
 	default:
-		ui.Run()
+		ui.Run(*tray)
 	}
 }
 
