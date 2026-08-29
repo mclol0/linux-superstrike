@@ -68,10 +68,26 @@ type ProfileInfo struct {
 
 // Profile is the decoded, editable view of one profile sector.
 //
-// This mouse stores separate X and Y DPI for the active resolution. raw[1] is
-// the resolution index, and it points at the X slot of the five uint16 DPI
-// words (raw[3..12]); Y is the next word. The other slots hold disabled /
-// placeholder resolutions (0xEE00, 0x2000, …), so we expose only the live X/Y.
+// DPI is stored as five 5-byte resolution entries — [Xlo,Xhi,Ylo,Yhi,flag] —
+// starting at sector byte 4, giving a fixed 800/1200/1600/2400/3200 DPI
+// ladder on an unmodified profile. (An earlier version of this code assumed
+// 2-byte words on a fixed stride from byte 3, which happens to alias into
+// entry 1's X/Y by coincidence — explaining why those edits "succeeded" and
+// read back correctly, but never reached the real sensor.) Confirmed by
+// diffing a sector against a known-good DPI change made through the real
+// G HUB, and independently corroborated by a from-scratch reverse-engineering
+// of a different physical unit in
+// github.com/mclol0/linux-superstrike/issues/1.
+//
+// Which entry the firmware treats as "active" is still not understood —
+// raw[1] (ResIndex) does not appear to directly index the five entries, and
+// the one flag-byte difference observed between an edited and unmodified
+// sector (0x03 vs the usual 0x02) does not correlate with the entry actually
+// in use. So WriteProfileResolution writes the requested DPI into all five
+// entries rather than guessing which one is live — confirmed via blind
+// (eyes-closed swipe, to rule out visual feedback biasing hand motion) raw
+// kernel evdev pointer-count measurement to reliably change the real sensor
+// DPI regardless of which entry is selected.
 type Profile struct {
 	Index      int    // 1-based slot number
 	Sector     int    // memory sector holding this profile
@@ -80,24 +96,25 @@ type Profile struct {
 	Raw          []byte // the full sector, including CRC — patch this then write
 	ReportRate   byte   // raw byte 0 (power-of-two rate code)
 	ReportRateHz int    // decoded polling rate in Hz
-	ResIndex     int    // raw[1]: resolution index
-	DPIX       int    // active resolution X DPI
-	DPIY       int    // active resolution Y DPI
-	DPI        [5]int // raw resolution words (diagnostic)
+	ResIndex     int    // raw[1]: meaning not fully understood, see above
+	DPIX       int    // entry 0's X DPI (display only — see above)
+	DPIY       int    // entry 0's Y DPI (display only — see above)
+	DPI        [5]int // each entry's X DPI (diagnostic)
 	Red        byte
 	Green      byte
 	Blue       byte
 	Buttons    [16]ButtonAction // decoded button slots (bytes 32..95)
 }
 
-// The active resolution's X and Y DPI are stored in the last two of the five
-// DPI words — X at slot 3 (sector bytes 9..10), Y at slot 4 (bytes 11..12).
-// (raw[1] is a resolution index that does NOT line up with these slots, so we
-// address them directly.)
+// Resolution entries are 5 bytes each — [Xlo,Xhi,Ylo,Yhi,flag] — starting at
+// sector byte 4. See the Profile doc comment above.
 const (
-	dpiXSlot = 3
-	dpiYSlot = 4
+	resEntryBase  = 4
+	resEntrySize  = 5
+	resEntryCount = 5
 )
+
+func resEntryOffset(i int) int { return resEntryBase + i*resEntrySize }
 
 // ReportRates lists the polling rates this scheme supports, high to low.
 var ReportRates = []int{8000, 4000, 2000, 1000, 500, 250, 125}
@@ -126,10 +143,13 @@ func rateByteForHz(hz int) (byte, bool) {
 // come from the control sector).
 func decodeProfile(sector int, raw []byte) Profile {
 	p := Profile{Sector: sector, Raw: raw, ReportRate: raw[0], ReportRateHz: hzForRateByte(raw[0]), ResIndex: int(raw[1])}
-	for i := 0; i < 5; i++ {
-		p.DPI[i] = int(raw[3+i*2]) | int(raw[4+i*2])<<8 // little-endian
+	for i := 0; i < resEntryCount; i++ {
+		off := resEntryOffset(i)
+		p.DPI[i] = int(raw[off]) | int(raw[off+1])<<8 // entry i's X DPI, little-endian
 	}
-	p.DPIX, p.DPIY = p.DPI[dpiXSlot], p.DPI[dpiYSlot]
+	off0 := resEntryOffset(0)
+	p.DPIX = int(raw[off0]) | int(raw[off0+1])<<8
+	p.DPIY = int(raw[off0+2]) | int(raw[off0+3])<<8
 	p.Red, p.Green, p.Blue = raw[13], raw[14], raw[15]
 	for i := 0; i < 16; i++ {
 		off := profileButtonsOffset + i*4
@@ -436,21 +456,49 @@ func (d *Device) writeSector(idx byte, sector int, data []byte) error {
 
 func isTimeout(err error) bool { return err == ErrTimeout }
 
-// WriteProfileResolution sets the active resolution's X and Y DPI for a
-// profile, touching only those two words (read from raw[1]) and leaving every
-// other byte — including the disabled placeholder slots — intact. Pass equal x
-// and y for a normal symmetric DPI.
+// WriteRawProfileAndReload writes a full, already-mutated sector buffer
+// (recomputing its CRC) and reloads it live via ReloadProfile. Exposed for
+// diagnostics that need to patch more than patchProfileSector's callback
+// covers (e.g. testing multiple resolution-stage slots at once).
+func (d *Device) WriteRawProfileAndReload(sector int, raw []byte) error {
+	idx, err := d.onboardIndex()
+	if err != nil {
+		return err
+	}
+	if err := d.writeSector(idx, sector, raw); err != nil {
+		return err
+	}
+	return d.ReloadProfile(sector)
+}
+
+// WriteProfileResolution sets a profile's DPI. Since it isn't yet known which
+// of the profile's 5 resolution entries the firmware treats as "active" (see
+// the Profile doc comment), this writes the same X/Y into all 5 entries —
+// confirmed via blind raw-evdev measurement to reliably change the real
+// sensor DPI regardless of which entry is selected. Each entry's flag byte
+// (and every other byte in the sector) is left untouched. Pass equal x and y
+// for a normal symmetric DPI.
 func (d *Device) WriteProfileResolution(sector, x, y int) error {
 	if x < 100 || x > MaxDPI || y < 100 || y > MaxDPI {
 		return fmt.Errorf("DPI must be 100..%d", MaxDPI)
 	}
-	return d.patchProfileSector(sector, func(raw []byte) error {
-		raw[3+dpiXSlot*2] = byte(x & 0xFF)
-		raw[4+dpiXSlot*2] = byte(x >> 8)
-		raw[3+dpiYSlot*2] = byte(y & 0xFF)
-		raw[4+dpiYSlot*2] = byte(y >> 8)
+	if err := d.patchProfileSector(sector, func(raw []byte) error {
+		for i := 0; i < resEntryCount; i++ {
+			off := resEntryOffset(i)
+			raw[off+0] = byte(x & 0xFF)
+			raw[off+1] = byte(x >> 8)
+			raw[off+2] = byte(y & 0xFF)
+			raw[off+3] = byte(y >> 8)
+			// raw[off+4] (flag byte) intentionally left untouched
+		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	// The write above only lands in flash — like report rate, the firmware only
+	// reloads a profile's live sensor state on a profile *switch*, so bounce
+	// through another enabled profile and back (see SetProfileReportRateHz).
+	return d.ReloadProfile(sector)
 }
 
 // SetProfileEnabled flips the enabled flag for the profile at the given 1-based
