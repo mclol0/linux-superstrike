@@ -559,6 +559,9 @@ func (a *App) renderProfileEditor() {
 	setActive := widget.NewButtonWithIcon("Set as active profile", theme.ConfirmIcon(), func() {
 		a.runOp("activate profile", func(d *hidpp.Device) error { return d.SetCurrentProfileSector(sector) }, a.loadProfiles)
 	})
+	if !p.Enabled {
+		setActive.Disable()
+	}
 
 	curName := p.Name
 	rename := widget.NewButtonWithIcon("Rename", theme.DocumentCreateIcon(), func() {

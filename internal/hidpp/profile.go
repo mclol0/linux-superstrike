@@ -68,10 +68,10 @@ type ProfileInfo struct {
 
 // Profile is the decoded, editable view of one profile sector.
 //
-// This mouse stores separate X and Y DPI for the active resolution. raw[1] is
-// the resolution index, and it points at the X slot of the five uint16 DPI
-// words (raw[3..12]); Y is the next word. The other slots hold disabled /
-// placeholder resolutions (0xEE00, 0x2000, …), so we expose only the live X/Y.
+// This mouse stores five DPI stages as 5-byte records starting at byte 3
+// (see stageOffset), each with its own X and Y. The device runs the stage
+// selected by its current DPI index (see CurrentDPIStage), so DPIX/DPIY are
+// that stage's values.
 type Profile struct {
 	Index      int    // 1-based slot number
 	Sector     int    // memory sector holding this profile
@@ -80,24 +80,37 @@ type Profile struct {
 	Raw          []byte // the full sector, including CRC — patch this then write
 	ReportRate   byte   // raw byte 0 (power-of-two rate code)
 	ReportRateHz int    // decoded polling rate in Hz
-	ResIndex     int    // raw[1]: resolution index
+	ResIndex     int    // raw[1]: stored default stage index (not the live one)
 	DPIX       int    // active resolution X DPI
 	DPIY       int    // active resolution Y DPI
-	DPI        [5]int // raw resolution words (diagnostic)
+	DPI        [5]int // X DPI of each of the five stages (diagnostic)
 	Red        byte
 	Green      byte
 	Blue       byte
 	Buttons    [16]ButtonAction // decoded button slots (bytes 32..95)
 }
 
-// The active resolution's X and Y DPI are stored in the last two of the five
-// DPI words — X at slot 3 (sector bytes 9..10), Y at slot 4 (bytes 11..12).
-// (raw[1] is a resolution index that does NOT line up with these slots, so we
-// address them directly.)
+// DPI stages are five 5-byte records starting at byte 3: a flag byte, then X
+// and Y as little-endian uint16. The factory list is 800, 1200, 1600, 2400,
+// 3200. The stage the sensor runs is the one at the device's current DPI index
+// (OnboardProfiles fn 0x09), which stays put across profile switches; raw[1]
+// is not it. Writing that stage of the active profile changes the sensor DPI
+// at once. Measured on a PRO X2 Superstrike by summing evdev REL_X counts
+// during steady sweeps: writing stage 0 (the current index) to 3200 raised the
+// rate about 3x, writing any other stage changed nothing.
 const (
-	dpiXSlot = 3
-	dpiYSlot = 4
+	dpiStageCount = 5
+	dpiStageBase  = 3
+	dpiStageSize  = 5
 )
+
+// stageOffset returns the sector offset of a stage's X word (Y follows at +2).
+func stageOffset(stage int) (int, bool) {
+	if stage < 0 || stage >= dpiStageCount {
+		return 0, false
+	}
+	return dpiStageBase + stage*dpiStageSize + 1, true
+}
 
 // ReportRates lists the polling rates this scheme supports, high to low.
 var ReportRates = []int{8000, 4000, 2000, 1000, 500, 250, 125}
@@ -124,12 +137,16 @@ func rateByteForHz(hz int) (byte, bool) {
 
 // decodeProfile parses a sector into a Profile (without Index/Enabled, which
 // come from the control sector).
-func decodeProfile(sector int, raw []byte) Profile {
+func decodeProfile(sector int, raw []byte, stage int) Profile {
 	p := Profile{Sector: sector, Raw: raw, ReportRate: raw[0], ReportRateHz: hzForRateByte(raw[0]), ResIndex: int(raw[1])}
-	for i := 0; i < 5; i++ {
-		p.DPI[i] = int(raw[3+i*2]) | int(raw[4+i*2])<<8 // little-endian
+	for i := 0; i < dpiStageCount; i++ {
+		off, _ := stageOffset(i)
+		p.DPI[i] = int(raw[off]) | int(raw[off+1])<<8 // little-endian
 	}
-	p.DPIX, p.DPIY = p.DPI[dpiXSlot], p.DPI[dpiYSlot]
+	if off, ok := stageOffset(stage); ok {
+		p.DPIX = int(raw[off]) | int(raw[off+1])<<8
+		p.DPIY = int(raw[off+2]) | int(raw[off+3])<<8
+	}
 	p.Red, p.Green, p.Blue = raw[13], raw[14], raw[15]
 	for i := 0; i < 16; i++ {
 		off := profileButtonsOffset + i*4
@@ -322,12 +339,43 @@ func (d *Device) CurrentProfileSector() (int, error) {
 	return int(r[0])<<8 | int(r[1]), nil
 }
 
+// CurrentDPIStage returns the index of the DPI stage the sensor is running
+// (OnboardProfiles fn 0x09). It persists across profile switches.
+func (d *Device) CurrentDPIStage() (int, error) {
+	idx, err := d.onboardIndex()
+	if err != nil {
+		return 0, err
+	}
+	r, err := d.Call(idx, 0x09)
+	if err != nil {
+		return 0, err
+	}
+	if len(r) < 1 {
+		return 0, ErrShortRead
+	}
+	return int(r[0]), nil
+}
+
+// dpiStageFor picks the stage to read or write for a profile sector: the live
+// index when the device reports it, else the sector's own default index.
+func dpiStageFor(cur int, curErr error, raw []byte) int {
+	if curErr == nil {
+		return cur
+	}
+	return int(raw[1])
+}
+
 // SetCurrentProfileSector makes the given profile active (fn3 setCurrentProfile).
 // Switching only takes effect in Onboard mode, so we ensure that first.
 func (d *Device) SetCurrentProfileSector(sector int) error {
 	idx, err := d.onboardIndex()
 	if err != nil {
 		return err
+	}
+	// The device ignores a switch to a disabled profile and never replies, which
+	// surfaces as a 4s "timed out waiting for device response". Say so instead.
+	if enabled, err := d.profileEnabled(sector); err == nil && !enabled {
+		return fmt.Errorf("profile in sector %d is disabled; enable it first", sector)
 	}
 	_ = d.SetOnboardMode(OnboardModeOnboard)
 	_, err = d.Call(idx, 0x03, byte(sector>>8), byte(sector&0xFF))
@@ -348,13 +396,14 @@ func (d *Device) Profiles() ([]Profile, error) {
 	if err != nil {
 		return nil, err
 	}
+	cur, curErr := d.CurrentDPIStage()
 	out := make([]Profile, 0, len(headers))
 	for i, h := range headers {
 		raw, rerr := d.readSectorChecked(idx, h.Sector, info.SectorSize)
 		if rerr != nil {
 			continue // skip a transiently-bad slot rather than show garbage
 		}
-		p := decodeProfile(h.Sector, raw)
+		p := decodeProfile(h.Sector, raw, dpiStageFor(cur, curErr, raw))
 		p.Index = i + 1
 		p.Enabled = h.Enabled
 		out = append(out, p)
@@ -391,7 +440,8 @@ func (d *Device) ActiveProfile() (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-	return decodeProfile(sector, raw), nil
+	cur, curErr := d.CurrentDPIStage()
+	return decodeProfile(sector, raw, dpiStageFor(cur, curErr, raw)), nil
 }
 
 // writeSector recomputes the CRC over a sector buffer and writes it back, then
@@ -436,21 +486,50 @@ func (d *Device) writeSector(idx byte, sector int, data []byte) error {
 
 func isTimeout(err error) bool { return err == ErrTimeout }
 
-// WriteProfileResolution sets the active resolution's X and Y DPI for a
-// profile, touching only those two words (read from raw[1]) and leaving every
-// other byte — including the disabled placeholder slots — intact. Pass equal x
-// and y for a normal symmetric DPI.
+// WriteProfileResolution sets the X and Y DPI of the stage the sensor runs
+// (the device's current DPI index), touching only those two words and leaving
+// every other byte intact. On the active profile it takes effect at once. Pass
+// equal x and y for a normal symmetric DPI.
 func (d *Device) WriteProfileResolution(sector, x, y int) error {
 	if x < 100 || x > MaxDPI || y < 100 || y > MaxDPI {
 		return fmt.Errorf("DPI must be 100..%d", MaxDPI)
 	}
+	cur, curErr := d.CurrentDPIStage()
 	return d.patchProfileSector(sector, func(raw []byte) error {
-		raw[3+dpiXSlot*2] = byte(x & 0xFF)
-		raw[4+dpiXSlot*2] = byte(x >> 8)
-		raw[3+dpiYSlot*2] = byte(y & 0xFF)
-		raw[4+dpiYSlot*2] = byte(y >> 8)
+		stage := dpiStageFor(cur, curErr, raw)
+		off, ok := stageOffset(stage)
+		if !ok {
+			return fmt.Errorf("DPI stage %d out of range", stage)
+		}
+		raw[off] = byte(x & 0xFF)
+		raw[off+1] = byte(x >> 8)
+		raw[off+2] = byte(y & 0xFF)
+		raw[off+3] = byte(y >> 8)
 		return nil
 	})
+}
+
+// profileEnabled reports whether the profile in the given sector is enabled in
+// the control sector.
+func (d *Device) profileEnabled(sector int) (bool, error) {
+	idx, err := d.onboardIndex()
+	if err != nil {
+		return false, err
+	}
+	info, err := d.ProfileInfo()
+	if err != nil {
+		return false, err
+	}
+	headers, err := d.profileHeaders(idx, info.Count)
+	if err != nil {
+		return false, err
+	}
+	for _, h := range headers {
+		if h.Sector == sector {
+			return h.Enabled, nil
+		}
+	}
+	return false, fmt.Errorf("no profile in sector %d", sector)
 }
 
 // SetProfileEnabled flips the enabled flag for the profile at the given 1-based
