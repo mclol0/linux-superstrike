@@ -87,7 +87,11 @@ This unit: slots → sectors `0x0001..0x0005`, `enabled` = `0x01`/`0x00`.
 To enable/disable a profile, flip the `enabled` byte (offset `slot*4+2`),
 recompute CRC, write the sector.
 
-### Profile sector layout (size 255)
+### Profile sector layouts (size 255)
+
+Two layouts have now been observed and are detected from their contents.
+
+#### Configured/LIGHTSPEED layout
 
 | Offset | Field |
 |---|---|
@@ -95,7 +99,7 @@ recompute CRC, write the sector.
 | 1 | resolution index |
 | 2 | shift-resolution index |
 | 3 … 12 | 5 DPI words, **uint16 little-endian** |
-| 13,14,15 | red, green, blue |
+| 13,14,15 | unverified/reserved on the Superstrike (no RGB feature exposed) |
 | 16 | power mode |
 | 17 | angle snapping |
 | 18,19 | write count (LE) |
@@ -110,6 +114,44 @@ Caveats specific to this device vs Solaar's generic layout:
   X/Y here. The other DPI words are disabled/placeholder slots (e.g. `0xEE00`,
   `0x2000`).
 - The **button table is at offset 48**, not Solaar's generic 32.
+
+#### Pristine/wired factory layout
+
+A wired unit that had never been configured by G HUB used five 5-byte DPI
+entries beginning at offset 4:
+
+```
+[Xlo, Xhi, Ylo, Yhi, 0x02]
+```
+
+The low `0x02` bit marks an enabled stage; clearing that bit removes the stage
+from the device's Next/Previous/Cycle DPI sequence. Byte 1 selects the default
+stage loaded with the profile. At least one stage must remain enabled.
+
+The factory ladder was 800, 1200, 1600, 2400 and 3200 DPI. Its current profile
+was ROM sector `0x0101`; RAM control sector `0x0000` was entirely `0xFF`, so no
+editable RAM profiles existed. Factory ROM profiles may end in `0xFFFF` rather
+than a stored CCITT CRC and must not be rejected solely for that reason.
+
+On the first edit, the app clones the active ROM sector into RAM, patches only
+the requested stage, writes a valid CCITT CRC, creates a minimal RAM control
+table pointing at the new enabled profile, and selects that RAM sector.
+Subsequent edits use the normal read/patch/CRC/write path.
+
+The mouse's current stage is volatile state and is not exposed by the profile
+sector. The desktop app therefore treats selection as a change to the stored
+default: it updates byte 1, reloads the profile and writes the selected value
+through Extended Adjustable DPI (`0x2202`) so the change is both immediate and
+persistent. On connection the app also applies the stored default explicitly;
+some firmware reports the correct resolution index while leaving the sensor at
+its previous volatile value when onboard mode is re-entered. For the same
+reason, normal desktop shutdown closes the HID handle without forcing the
+device out of host mode; changing modes during shutdown would replace the
+selected DPI with that stale stage.
+
+Editing any stage also reloads the profile sector. The UI records the live
+stage before that write and reapplies it afterward, since the reload may select
+a different stage even when the edited stage was already active.
 
 ### Report-rate byte encoding (the surprising one)
 
@@ -152,6 +194,18 @@ Wire encoding: each value is packed in bits 7..2 (`wire = logical << 2`). The
 rapid-trigger byte's **bit 0 is a firmware sensitivity flag that must be
 preserved** across writes, or the device returns INVALID_ARGUMENT. These
 **do** apply live (no profile reload needed).
+
+## Scroll-wheel Bhop mode — `0x80E0` BunnyHopping
+
+The device advertises this feature, but its payload layout is not decoded yet.
+G HUB describes it as a scroll-wheel filter: the first wheel event is ignored
+unless a second event occurs within a configurable 100–1000 ms window.
+
+Run `superstrike -bhop-probe` to collect conservative diagnostic output. The
+probe resolves the runtime feature index, calls probable read functions `fn0`
+and `fn2` twice, and prints the raw response bytes. It intentionally does not
+call probable setter `fn1`. Do not add a setter until its payload has been
+verified against device responses or a G HUB USB capture.
 
 ## Buttons (via the profile, offset 48)
 

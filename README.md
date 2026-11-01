@@ -1,11 +1,11 @@
 # Linux Superstrike
 
-**A native Linux control app for the Logitech PRO X 2 Superstrike** — the G HUB
+**A modern Linux control app for the Logitech PRO X 2 Superstrike** — the G HUB
 features that mouse needs (DPI, polling rate, haptics, button remapping,
 profiles), on Linux, in a single self-contained binary. No daemon, no Wine, no
 cloud account.
 
-![Superstrike Control dashboard](docs/dashboard.png)
+<img width="1724" height="1160" alt="image" src="https://github.com/user-attachments/assets/ae2648af-0719-43a1-8424-073712ad1c3c" />
 
 > 🤖 **Fully vibe-coded** — this entire app (protocol reverse-engineering and
 > all) was built collaboratively with an AI coding assistant. See
@@ -32,7 +32,8 @@ your settings apply instantly **and persist on the mouse itself**.
   (DPI/profile cycle, etc.), or disable it.
 - **Haptics** — tune the analog buttons' **click haptics**, **actuation point**,
   and **rapid trigger** (feature `0x1B0C`).
-- Clean, themed UI; everything writes to onboard memory and **survives reboots**.
+- A polished Wails + React interface; everything writes to onboard memory and
+  **survives reboots**.
 
 ## Install
 
@@ -65,18 +66,20 @@ your settings apply instantly **and persist on the mouse itself**.
    ./superstrike
    ```
 
-> The binary is dynamically linked against the standard desktop OpenGL/X11
-> libraries (a GUI-toolkit requirement) — present on essentially every Linux
-> desktop. If something's missing it'll tell you.
+> The desktop window uses the system WebKitGTK runtime. Install
+> `libwebkit2gtk-4.1-0` (or your distribution's equivalent) if it is not already
+> present.
 
 ### Option B — build from source
 
-Requires Go 1.23+ and the usual GL/X11 dev headers (for the GUI).
+Requires Go 1.26+, Node.js 22+, npm, GTK 3, and WebKitGTK 4.1 development files.
 
 ```sh
 git clone https://github.com/mclol0/linux-superstrike
 cd linux-superstrike
-go build -o superstrike .
+npm --prefix frontend ci --include=dev
+npm --prefix frontend run build
+go build -tags "desktop,production,webkit2_41" -o superstrike .
 ```
 
 To install it as a desktop app (icon + launcher in your menu):
@@ -85,6 +88,12 @@ To install it as a desktop app (icon + launcher in your menu):
 ./packaging/install.sh
 ```
 
+The installer uses an existing Go toolchain when available. If Go is missing,
+it downloads the version declared in `go.mod` into the repository's local
+`.tools` directory; it does not alter your system Go installation.
+The installed desktop launcher uses the binary's absolute path and therefore
+does not require `~/.local/bin` to be present in the desktop session's `PATH`.
+
 ## How it works
 
 This mouse ignores the standard *live* DPI/rate setters in firmware — the only
@@ -92,10 +101,15 @@ thing that actually takes effect (and what G HUB does) is editing the **onboard
 profile** stored on the mouse. So the app:
 
 - speaks HID++ 2.0 directly over `/dev/hidraw` (no `hidapi`/CGO HID dependency);
-- reads/writes the profile sectors (DPI, report rate, buttons, RGB), recomputing
+- reads/writes the profile sectors (DPI, report rate and buttons), recomputing
   the CRC and verifying the write;
 - measures the **true** polling rate by counting HID input reports, because the
   device's rate register reports a stale value.
+
+The desktop shell is built with Wails. React renders the interface while a
+small, typed Go controller serializes every device operation and sends live
+connection and polling-rate updates to the UI. The diagnostic CLI and desktop
+app share the same HID++ implementation.
 
 For the full protocol details — feature table, DPI/rate encodings, the onboard
 profile sector layout, haptics, and button format — see
@@ -107,10 +121,16 @@ The binary doubles as a CLI for diagnostics:
 
 ```
 superstrike -probe        # device info + full HID++ feature table
+superstrike -bhop-probe   # conservative raw reads of BunnyHopping feature 0x80E0
 superstrike -profiles     # list all profiles + control sectors
 superstrike -measurerate  # measure the real report rate (move the mouse)
 superstrike -scan         # list Logitech hidraw nodes + HID++ responses
 ```
+
+`-bhop-probe` is an intentionally limited reverse-engineering aid. It resolves
+feature `0x80E0` and calls only the probable read functions (`fn0` capabilities
+and `fn2` current configuration), twice each. It never calls `fn1`, the probable
+setter. Copy the complete terminal output when reporting results.
 
 ## Status & compatibility
 

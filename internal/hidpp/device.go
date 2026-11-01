@@ -152,6 +152,7 @@ func (d *Device) Battery() (Battery, error) {
 type DPIInfo struct {
 	Current int
 	Default int
+	LOD     byte
 	Min     int
 	Max     int
 	Step    int
@@ -257,6 +258,9 @@ func (d *Device) DPI() (DPIInfo, error) {
 			info.Current = info.Default
 		}
 	}
+	if ext && len(cur) >= 10 {
+		info.LOD = cur[9]
+	}
 	if info.Min == 0 {
 		info.Min = 100
 	}
@@ -297,6 +301,10 @@ func (d *Device) CurrentDPI() (int, error) {
 // SetDPI sets sensor 0's DPI. Extended (0x2202) setSensorDpi is fn6 and takes
 // X, Y and LOD words; classic (0x2201) setSensorDpi is fn3 with just X.
 func (d *Device) SetDPI(dpi int) error {
+	return d.setDPIWithLOD(dpi, 0)
+}
+
+func (d *Device) setDPIWithLOD(dpi int, lod byte) error {
 	idx, ext := d.dpiFeature()
 	if idx == 0 {
 		return fmt.Errorf("no adjustable-DPI feature")
@@ -305,7 +313,7 @@ func (d *Device) SetDPI(dpi int) error {
 	if ext {
 		// [sensor, dpiX_hi, dpiX_lo, dpiY_hi, dpiY_lo, lod] — Y must mirror X or
 		// the device zeroes vertical movement / rejects the call.
-		_, err = d.Call(idx, 0x06, 0x00, byte(dpi>>8), byte(dpi&0xFF), byte(dpi>>8), byte(dpi&0xFF), 0x00)
+		_, err = d.Call(idx, 0x06, 0x00, byte(dpi>>8), byte(dpi&0xFF), byte(dpi>>8), byte(dpi&0xFF), lod)
 	} else {
 		_, err = d.Call(idx, 0x03, 0x00, byte(dpi>>8), byte(dpi&0xFF))
 	}
